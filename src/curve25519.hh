@@ -4,6 +4,7 @@
 
 #include "arr.hh"
 #include "int.hh"
+#include "mem.hh"
 #include "status.hh"
 
 // Establishing shared secrets according to https://cr.yp.to/ecdh.html.
@@ -15,6 +16,8 @@ struct Private {
   Arr<U8, 32> bytes;
 
   static Private FromDevUrandom(Status &);
+
+  operator MemView() { return bytes; }
 };
 
 struct Public {
@@ -23,12 +26,15 @@ struct Public {
   static Public FromPrivate(const Private &);
 
   bool operator==(const Public &) const;
+  operator MemView() { return bytes; }
 };
 
 struct Shared {
   Arr<U8, 32> bytes;
 
   static Shared FromPrivateAndPublic(const Private &, const Public &);
+
+  operator MemView() { return bytes; }
 };
 
 } // namespace maf::curve25519

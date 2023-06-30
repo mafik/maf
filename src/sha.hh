@@ -10,6 +10,8 @@ struct SHA1 {
   U8 bytes[20];
 
   SHA1(MemView);
+
+  operator MemView() { return bytes; }
 };
 
 struct SHA256 {
@@ -34,6 +36,8 @@ struct SHA256 {
     Builder &Update(MemView);
     SHA256 Finalize();
   };
+
+  operator MemView() { return bytes; }
 };
 
 struct SHA512 {
@@ -59,6 +63,8 @@ struct SHA512 {
     Builder &Update(MemView);
     SHA512 Finalize();
   };
+
+  operator MemView() { return bytes; }
 };
 
 } // namespace maf

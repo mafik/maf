@@ -7,6 +7,7 @@
 #include "curve25519.hh"
 #include "format.hh"
 #include "hex.hh"
+#include "hkdf.hh"
 #include "int.hh"
 #include "log.hh"
 #include "sha.hh"
@@ -24,11 +25,25 @@ struct Phase3 {
   Arr<U8, 12> server_application_iv;
 };
 
+void HKDF_Expand_Label(MemView key, StrView label, MemView ctx, MemView out) {
+  MemBuf hkdf_label;
+  AppendBigEndian<U16>(hkdf_label, out.size());
+  hkdf_label.push_back(label.size());
+  hkdf_label.insert(hkdf_label.end(), label.begin(), label.end());
+  hkdf_label.push_back(ctx.size());
+  hkdf_label.insert(hkdf_label.end(), ctx.begin(), ctx.end());
+  HKDF_Expand<SHA256>(key, hkdf_label, out);
+}
+
+Arr<U8, 32> zero_key = {};
+SHA256 early_secret = HKDF_Extract<SHA256>("\x00"_MemView, zero_key);
+SHA256 empty_hash("");
+
 // Phase for the encrypted handshake part (between "Server Hello" & "Server
 // Handshake Finished").
 struct Phase2 : Phase {
   SHA256::Builder sha_builder;
-  Arr<U8, 32> handshake_secret;
+  SHA256 handshake_secret;
   Arr<U8, 32> client_handshake_key;
   Arr<U8, 32> server_handshake_key;
   Arr<U8, 12> client_handshake_iv;
@@ -37,9 +52,36 @@ struct Phase2 : Phase {
   Phase2(SHA256::Builder sha_builder, curve25519::Shared shared_secret)
       : sha_builder(std::move(sha_builder)) {
     auto backup_builder = sha_builder;
-    auto sha = backup_builder.Finalize();
-    LOG << "SHA: " << BytesToHex(sha.bytes);
-    LOG << "shared secret: " << BytesToHex(shared_secret.bytes);
+    auto hello_hash = backup_builder.Finalize();
+    Arr<U8, 32> derived_secret, client_secret, server_secret; // Hash-size-bytes
+
+    HKDF_Expand_Label(early_secret, "tls13 derived", empty_hash,
+                      derived_secret);
+    handshake_secret = HKDF_Extract<SHA256>(derived_secret, shared_secret);
+    HKDF_Expand_Label(handshake_secret, "tls13 c hs traffic", hello_hash,
+                      client_secret);
+    HKDF_Expand_Label(handshake_secret, "tls13 s hs traffic", hello_hash,
+                      server_secret);
+    HKDF_Expand_Label(client_secret, "tls13 key", ""_MemView,
+                      client_handshake_key);
+    HKDF_Expand_Label(server_secret, "tls13 key", ""_MemView,
+                      server_handshake_key);
+    HKDF_Expand_Label(client_secret, "tls13 iv", ""_MemView,
+                      client_handshake_iv);
+    HKDF_Expand_Label(server_secret, "tls13 iv", ""_MemView,
+                      server_handshake_iv);
+    LOG << "hello_hash=" << BytesToHex(hello_hash);
+    LOG << "shared_secret=" << BytesToHex(shared_secret);
+    LOG << "zero_key=" << BytesToHex(zero_key);
+    LOG << "early_secret=" << BytesToHex(early_secret);
+    LOG << "derived_secret=" << BytesToHex(derived_secret);
+    LOG << "handshake_secret=" << BytesToHex(handshake_secret);
+    LOG << "client_secret=" << BytesToHex(client_secret);
+    LOG << "server_secret=" << BytesToHex(server_secret);
+    LOG << "client_handshake_key=" << BytesToHex(client_handshake_key);
+    LOG << "server_handshake_key=" << BytesToHex(server_handshake_key);
+    LOG << "client_handshake_iv=" << BytesToHex(client_handshake_iv);
+    LOG << "server_handshake_iv=" << BytesToHex(server_handshake_iv);
   }
 
   void ProcessRecord(Connection &conn, U8 type, MemView contents) override {

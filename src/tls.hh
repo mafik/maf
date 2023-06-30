@@ -6,18 +6,11 @@
 #include "tcp.hh"
 #include "unique_ptr.hh"
 
-// TODO: Implement HMAC
-// TODO: Implement HKDF
-// TODO: Compute handshake secrets (milestone!)
 // TODO: ChaCha20+Poly1305 https://www.rfc-editor.org/rfc/rfc8439.html
-
 // TODO: RFC Compliance https://datatracker.ietf.org/doc/html/rfc8446#section-9
 
-// Approach:
-// Compute SHA-256 incrementally (don't record the heavyweight messages!).
-
-// Create a timeline of what is needed & when
-
+// # Timeline of what is needed & when
+//
 // Begin
 //   - generate client_secret
 //   - begin incremental SHA-256
