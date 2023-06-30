@@ -11,6 +11,7 @@ Status::Status() : errsv(0) {}
 Str &Status::operator()(const std::source_location location_arg) {
   if (errsv == 0) {
     errsv = errno;
+    errno = 0;
   }
   entry.reset(new Entry{
       .next = std::move(entry), .location = location_arg, .message = {}});

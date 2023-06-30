@@ -15,6 +15,42 @@ namespace maf::tls {
 
 // Nice introduction to TLS 1.3: https://tls13.xargs.org/
 
+// Phase for the encrypted application part (after "Client/Server Handshake
+// Finished").
+struct Phase3 {
+  Arr<U8, 32> client_application_key;
+  Arr<U8, 32> server_application_key;
+  Arr<U8, 12> client_application_iv;
+  Arr<U8, 12> server_application_iv;
+};
+
+// Phase for the encrypted handshake part (between "Server Hello" & "Server
+// Handshake Finished").
+struct Phase2 : Phase {
+  SHA256::Builder sha_builder;
+  Arr<U8, 32> handshake_secret;
+  Arr<U8, 32> client_handshake_key;
+  Arr<U8, 32> server_handshake_key;
+  Arr<U8, 12> client_handshake_iv;
+  Arr<U8, 12> server_handshake_iv;
+
+  Phase2(SHA256::Builder sha_builder, curve25519::Shared shared_secret)
+      : sha_builder(std::move(sha_builder)) {
+    auto backup_builder = sha_builder;
+    auto sha = backup_builder.Finalize();
+    LOG << "SHA: " << BytesToHex(sha.bytes);
+    LOG << "shared secret: " << BytesToHex(shared_secret.bytes);
+  }
+
+  void ProcessRecord(Connection &conn, U8 type, MemView contents) override {
+    if (type == 20) { // Change Cipher Spec - ignore
+      return;
+    }
+    conn.status() += f("Received TLS record type %d", type);
+  }
+};
+
+// Phase for the plaintext handshake part (before "Server Hello").
 struct Phase1 : Phase {
   SHA256::Builder sha_builder;
   curve25519::Private client_secret;
@@ -250,12 +286,10 @@ struct Phase1 : Phase {
     }   // while (!server_hello.empty())
 
     sha_builder.Update(handshake);
-    auto backup_builder = sha_builder;
-    auto sha = backup_builder.Finalize();
     curve25519::Shared shared_secret =
         curve25519::Shared::FromPrivateAndPublic(client_secret, server_public);
-    LOG << "SHA: " << BytesToHex(sha.bytes);
-    LOG << "shared secret: " << BytesToHex(shared_secret.bytes);
+
+    conn.phase.reset(new Phase2(std::move(sha_builder), shared_secret));
   }
 
   void ProcessRecord(Connection &conn, U8 type, MemView contents) override {
@@ -268,22 +302,6 @@ struct Phase1 : Phase {
                          type);
     }
   }
-};
-
-struct Phase2 {
-  // SHA256::Builder sha;
-  Arr<U8, 48> handshake_secret;
-  Arr<U8, 32> client_handshake_key;
-  Arr<U8, 32> server_handshake_key;
-  Arr<U8, 12> client_handshake_iv;
-  Arr<U8, 12> server_handshake_iv;
-};
-
-struct Phase3 {
-  Arr<U8, 32> client_application_key;
-  Arr<U8, 32> server_application_key;
-  Arr<U8, 12> client_application_iv;
-  Arr<U8, 12> server_application_iv;
 };
 
 void Connection::ConnectTLS(Config config) {

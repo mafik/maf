@@ -6,6 +6,7 @@
 #include "tcp.hh"
 #include "unique_ptr.hh"
 
+// TODO: Implement HMAC
 // TODO: Implement HKDF
 // TODO: Compute handshake secrets (milestone!)
 // TODO: ChaCha20+Poly1305 https://www.rfc-editor.org/rfc/rfc8439.html
