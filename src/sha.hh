@@ -13,6 +13,8 @@ struct SHA1 {
 };
 
 struct SHA256 {
+  constexpr static size_t kBlockSize = 64;
+
   U8 bytes[32];
 
   // Construct an uninitialized SHA256. There shoud be no reason to use this
