@@ -1,24 +1,28 @@
 #pragma once
 
 #include "arr.hh"
-#include "curve25519.hh"
+#include "mem.hh"
 #include "optional.hh"
 #include "tcp.hh"
+#include "unique_ptr.hh"
 
-// TODO: Implement SHA-384
-// TODO: Compute SHA-384 of Client Hello & Server Hello
+// TODO: Implement SHA-256
+// TODO: Compute SHA-256 of Client Hello & Server Hello
 // TODO: Compute shared secret using Curve25519
 // TODO: Implement HKDF
-// TODO: Compute handshake secrets, also record handshake_secret (milestone!)
+// TODO: Compute handshake secrets (milestone!)
+// TODO: ChaCha20+Poly1305 https://www.rfc-editor.org/rfc/rfc8439.html
+
+// TODO: RFC Compliance https://datatracker.ietf.org/doc/html/rfc8446#section-9
 
 // Approach:
-// Compute SHA-384 incrementally (don't record the heavyweight messages!).
+// Compute SHA-256 incrementally (don't record the heavyweight messages!).
 
 // Create a timeline of what is needed & when
 
 // Begin
 //   - generate client_secret
-//   - begin incremental SHA-384
+//   - begin incremental SHA-256
 // > Client Hello
 //   - hash
 // < Server Hello
@@ -44,6 +48,14 @@
 
 namespace maf::tls {
 
+struct Connection;
+
+struct Phase {
+  virtual ~Phase() = default;
+
+  virtual void ProcessRecord(Connection &, U8 type, MemView contents) = 0;
+};
+
 struct Connection : tcp::Connection {
   // Buffer of plaintext data received from the remote peer.
   Str received_tls;
@@ -51,10 +63,7 @@ struct Connection : tcp::Connection {
   // Buffer of plaintext data to be sent to the remote peer.
   Str send_tls;
 
-  curve25519::Private client_secret;
-  curve25519::Public client_public;
-
-  curve25519::Shared shared;
+  UniquePtr<Phase> phase;
 
   struct Config : public tcp::Connection::Config {
     Optional<Str> server_name;

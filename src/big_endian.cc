@@ -17,30 +17,30 @@ template <> void PutBigEndian(Str &s, Size offset, U24 x) {
   s[offset + 2] = (char)(x & 0xff);
 }
 
-template <> U8 ConsumeBigEndian(StrView &s) {
+template <> U8 ConsumeBigEndian(MemView &s) {
   if (s.size() < 1) {
     return 0;
   }
   U8 x = (U8)s[0];
-  s.remove_prefix(1);
+  s = s.subspan<1>();
   return x;
 }
 
-template <> U16 ConsumeBigEndian(StrView &s) {
+template <> U16 ConsumeBigEndian(MemView &s) {
   if (s.size() < 2) {
     return 0;
   }
   U16 x = (U8)s[0] << 8 | (U8)s[1];
-  s.remove_prefix(2);
+  s = s.subspan<2>();
   return x;
 }
 
-template <> U24 ConsumeBigEndian(StrView &s) {
+template <> U24 ConsumeBigEndian(MemView &s) {
   if (s.size() < 3) {
     return 0;
   }
   U24 x = (U8)s[0] << 16 | (U8)s[1] << 8 | (U8)s[2];
-  s.remove_prefix(3);
+  s = s.subspan<3>();
   return x;
 }
 

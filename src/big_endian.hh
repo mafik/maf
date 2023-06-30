@@ -1,6 +1,7 @@
 #pragma once
 
 #include "int.hh"
+#include "mem.hh"
 #include "str.hh"
 #include <bit>
 
@@ -15,11 +16,11 @@ template <typename T> void PutBigEndian(Str &s, Size offset, T x);
 template <> void PutBigEndian(Str &s, Size offset, U16 x);
 template <> void PutBigEndian(Str &s, Size offset, U24 x);
 
-template <typename T> T ConsumeBigEndian(StrView &s);
+template <typename T> T ConsumeBigEndian(MemView &s);
 
-template <> U8 ConsumeBigEndian(StrView &s);
-template <> U16 ConsumeBigEndian(StrView &s);
-template <> U24 ConsumeBigEndian(StrView &s);
+template <> U8 ConsumeBigEndian(MemView &s);
+template <> U16 ConsumeBigEndian(MemView &s);
+template <> U24 ConsumeBigEndian(MemView &s);
 
 template <typename T> struct Big {
   T big_endian;
