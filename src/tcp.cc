@@ -159,7 +159,7 @@ void Connection::SendTCP() {
   if (write_buffer_full) {
     return;
   }
-  ssize_t count = send(fd, send_tcp.c_str(), send_tcp.size(), MSG_NOSIGNAL);
+  ssize_t count = send(fd, send_tcp.data(), send_tcp.size(), MSG_NOSIGNAL);
   if (count == -1) {
     if (errno == EWOULDBLOCK || errno == EAGAIN) {
       // We must wait for the data to be sent before writing more.
@@ -171,7 +171,7 @@ void Connection::SendTCP() {
     CloseTCP();
     return;
   }
-  send_tcp = send_tcp.substr(count);
+  send_tcp.erase(send_tcp.begin(), send_tcp.begin() + count);
   if (closing && send_tcp.empty()) {
     CloseTCP();
     return;
@@ -191,7 +191,7 @@ void Connection::CloseTCP() {
   close(fd);
 }
 
-thread_local static char read_buffer[1024 * 1024];
+thread_local static U8 read_buffer[1024 * 1024];
 
 void Connection::NotifyRead(Status &epoll_status) {
   ssize_t count = read(fd, read_buffer, sizeof(read_buffer));
@@ -211,7 +211,7 @@ void Connection::NotifyRead(Status &epoll_status) {
     return;
   }
 
-  received_tcp.append(read_buffer, count);
+  received_tcp.insert(received_tcp.end(), read_buffer, read_buffer + count);
   NotifyReceivedTCP();
 }
 

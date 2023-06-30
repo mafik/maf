@@ -2,19 +2,19 @@
 
 namespace maf {
 
-template <> void AppendBigEndian(Str &s, U16 x) {
-  s.append({(char)(x >> 8), (char)(x & 0xff)});
+template <> void AppendBigEndian(MemBuf &s, U16 x) {
+  s.insert(s.end(), {(U8)(x >> 8), (U8)(x & 0xff)});
 }
 
-template <> void PutBigEndian(Str &s, Size offset, U16 x) {
-  s[offset] = (char)(x >> 8);
-  s[offset + 1] = (char)(x & 0xff);
+template <> void PutBigEndian(MemView s, Size offset, U16 x) {
+  s[offset] = (U8)(x >> 8);
+  s[offset + 1] = (U8)(x & 0xff);
 }
 
-template <> void PutBigEndian(Str &s, Size offset, U24 x) {
-  s[offset] = (char)(x >> 16);
-  s[offset + 1] = (char)(x >> 8);
-  s[offset + 2] = (char)(x & 0xff);
+template <> void PutBigEndian(MemView s, Size offset, U24 x) {
+  s[offset] = (U8)(x >> 16);
+  s[offset + 1] = (U8)(x >> 8);
+  s[offset + 2] = (U8)(x & 0xff);
 }
 
 template <> U8 ConsumeBigEndian(MemView &s) {

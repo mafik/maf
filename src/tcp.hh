@@ -1,6 +1,7 @@
 #pragma once
 
 #include "epoll.hh"
+#include "mem.hh"
 #include "str.hh"
 
 namespace maf::tcp {
@@ -33,8 +34,8 @@ struct Server : epoll::Listener {
 //
 // This is not a "listener" in the TCP sense.
 struct Connection : epoll::Listener {
-  Str received_tcp;
-  Str send_tcp;
+  MemBuf received_tcp;
+  MemBuf send_tcp;
 
   // Status of this connection.
   Status status;

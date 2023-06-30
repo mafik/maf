@@ -2,19 +2,18 @@
 
 #include "int.hh"
 #include "mem.hh"
-#include "str.hh"
 #include <bit>
 
 namespace maf {
 
-template <typename T> void AppendBigEndian(Str &s, T x);
+template <typename T> void AppendBigEndian(MemBuf &s, T x);
 
-template <> void AppendBigEndian(Str &s, U16 x);
+template <> void AppendBigEndian(MemBuf &s, U16 x);
 
-template <typename T> void PutBigEndian(Str &s, Size offset, T x);
+template <typename T> void PutBigEndian(MemView s, Size offset, T x);
 
-template <> void PutBigEndian(Str &s, Size offset, U16 x);
-template <> void PutBigEndian(Str &s, Size offset, U24 x);
+template <> void PutBigEndian(MemView s, Size offset, U16 x);
+template <> void PutBigEndian(MemView s, Size offset, U24 x);
 
 template <typename T> T ConsumeBigEndian(MemView &s);
 

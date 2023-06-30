@@ -1,19 +1,22 @@
 #include "tls.hh"
 
+#include <cstring>
+#include <initializer_list>
+
 #include "big_endian.hh"
 #include "curve25519.hh"
 #include "format.hh"
 #include "hex.hh"
 #include "int.hh"
 #include "log.hh"
-#include <cstring>
+#include "sha.hh"
 
 namespace maf::tls {
 
 // Nice introduction to TLS 1.3: https://tls13.xargs.org/
 
 struct Phase1 : Phase {
-  // SHA256::Builder sha;
+  SHA256::Builder sha_builder;
   curve25519::Private client_secret;
 
   Phase1(Connection &conn, Connection::Config &config) {
@@ -33,117 +36,119 @@ struct Phase1 : Phase {
     auto client_public = curve25519::Public::FromPrivate(client_secret);
 
     // Send "Client Hello"
-    send_tcp += '\x16'; // handshake
-    send_tcp +=
-        {'\x03', '\x01'}; // protocol verison: TLS 1.0 (for compatibility)
+    auto Append = [&](const std::initializer_list<U8> bytes) {
+      send_tcp.insert(send_tcp.end(), bytes);
+    };
+    Append({0x16});       // handshake
+    Append({0x03, 0x01}); // protocol verison: TLS 1.0 (for compatibility)
     Size record_length_offset = send_tcp.size();
-    send_tcp += {'\x00', '\x00'}; // placeholder for record length
+    Append({0x00, 0x00}); // placeholder for record length
     Size record_begin = send_tcp.size();
-    send_tcp += '\x01'; // Client Hello
+    Append({0x01}); // handshake type: Client Hello
     Size handshake_length_offset = send_tcp.size();
-    send_tcp += {'\x00', '\x00', '\x00'}; // placeholder for message length
+    Append({0x00, 0x00, 0x00}); // placeholder for handshake length
     Size handshake_begin = send_tcp.size();
-    send_tcp += {'\x03', '\x03'}; // client version: TLS 1.2 (for compatibility)
+    Append({0x03, 0x03}); // client version: TLS 1.2 (for compatibility)
 
     for (int i = 0; i < 32; ++i) {
-      send_tcp += (char)(rand() % 0x100); // client random
+      send_tcp.push_back(rand() % 0x100); // client random
     }
 
-    send_tcp += '\x20'; // session id length: 32
+    Append({0x20}); // session id length: 32
     for (int i = 0; i < 32; ++i) {
-      send_tcp += (char)(rand() % 0x100); // fake session id
+      send_tcp.push_back(rand() % 0x100); // fake session id
     }
 
-    send_tcp +=
-        {'\x00', '\x08'}; // cipher suites length: 8 (four cipher suites)
-    send_tcp += {'\x13', '\x03'}; // TLS_CHACHA20_POLY1305_SHA256
-    send_tcp += {'\x13', '\x01'}; // TLS_AES_128_GCM_SHA256
-    send_tcp += {'\x13', '\x02'}; // TLS_AES_256_GCM_SHA384
-    send_tcp += {'\x00', '\xff'}; // TLS_EMPTY_RENEGOTIATION_INFO_SCSV
-
-    send_tcp += '\x01'; // compression methods length: 1
-    send_tcp += '\x00'; // compression method: null
+    Append({0x00, 0x08}); // cipher suites length: 8 (four cipher suites)
+    Append({0x13, 0x03}); // TLS_CHACHA20_POLY1305_SHA256
+    Append({0x13, 0x01}); // TLS_AES_128_GCM_SHA256
+    Append({0x13, 0x02}); // TLS_AES_256_GCM_SHA384
+    Append({0x00, 0xff}); // TLS_EMPTY_RENEGOTIATION_INFO_SCSV
+    Append({0x01});       // compression methods length: 1
+    Append({0x00});       // compression method: null
 
     Size extensions_length_offset = send_tcp.size();
-    send_tcp += {'\x00', '\x00'}; // placeholder for extensions length
+    Append({0x00, 0x00}); // placeholder for extensions length
     Size extensions_begin = send_tcp.size();
 
     if (config.server_name) {
       auto hostname_length = config.server_name->size();
       auto entry_length = hostname_length + 3;
       auto extension_length = entry_length + 2;
-      send_tcp += {'\x00', '\x00'}; // extension type: server name
+      Append({0x00, 0x00}); // extension type: server name
       AppendBigEndian<U16>(send_tcp, extension_length);
       AppendBigEndian<U16>(send_tcp, entry_length);
-      send_tcp += '\x00'; // entry type: DNS hostname
+      Append({0x00}); // entry type: DNS hostname
       AppendBigEndian<U16>(send_tcp, hostname_length);
-      send_tcp += *config.server_name;
+      send_tcp.insert(send_tcp.end(), config.server_name->begin(),
+                      config.server_name->end());
     }
 
-    send_tcp += {'\x00', '\x0b'}; // extension type: EC point formats
-    send_tcp += {'\x00', '\x04'}; // extension length: 4
-    send_tcp += '\x03';           // format length: 3
-    send_tcp += '\x00';           // format: uncompressed
-    send_tcp += '\x01';           // format: ansiX962_compressed_prime
-    send_tcp += '\x02';           // format: ansiX962_compressed_char2
+    Append({0x00, 0x0b}); // extension type: EC point formats
+    Append({0x00, 0x04}); // extension length: 4
+    Append({0x03});       // format length: 3
+    Append({0x00});       // format: uncompressed
+    Append({0x01});       // format: ansiX962_compressed_prime
+    Append({0x02});       // format: ansiX962_compressed_char2
 
-    send_tcp += {'\x00', '\x0a'}; // extension type: supported groups
-    send_tcp += {'\x00', '\x16'}; // extension length: 22
-    send_tcp += {'\x00', '\x14'}; // supported groups length: 20
-    send_tcp += {'\x00', '\x1d'}; // x25519
-    send_tcp += {'\x00', '\x17'}; // secp256r1
-    send_tcp += {'\x00', '\x1e'}; // x448
-    send_tcp += {'\x00', '\x19'}; // secp521r1
-    send_tcp += {'\x00', '\x18'}; // secp384r1
-    send_tcp += {'\x01', '\x00'}; // ffdhe2048
-    send_tcp += {'\x01', '\x01'}; // ffdhe3072
-    send_tcp += {'\x01', '\x02'}; // ffdhe4096
-    send_tcp += {'\x01', '\x03'}; // ffdhe6144
-    send_tcp += {'\x01', '\x04'}; // ffdhe8192
+    Append({0x00, 0x0a}); // extension type: supported groups
+    Append({0x00, 0x16}); // extension length: 22
+    Append({0x00, 0x14}); // supported groups length: 20
+    Append({0x00, 0x1d}); // x25519
+    Append({0x00, 0x17}); // secp256r1
+    Append({0x00, 0x1e}); // x448
+    Append({0x00, 0x19}); // secp521r1
+    Append({0x00, 0x18}); // secp384r1
+    Append({0x01, 0x00}); // ffdhe2048
+    Append({0x01, 0x01}); // ffdhe3072
+    Append({0x01, 0x02}); // ffdhe4096
+    Append({0x01, 0x03}); // ffdhe6144
+    Append({0x01, 0x04}); // ffdhe8192
 
-    send_tcp += {'\x00', '\x23'}; // extension type: session ticket
-    send_tcp += {'\x00', '\x00'}; // extension length: 0
+    Append({0x00, 0x23}); // extension type: session ticket
+    Append({0x00, 0x00}); // extension length: 0
 
-    send_tcp += {'\x00', '\x16'}; // extension type: entrypt then MAC
-    send_tcp += {'\x00', '\x00'}; // extension length: 0
+    Append({0x00, 0x16}); // extension type: entrypt then MAC
+    Append({0x00, 0x00}); // extension length: 0
 
-    send_tcp += {'\x00', '\x17'}; // extension type: extended master secret
-    send_tcp += {'\x00', '\x00'}; // extension length: 0
+    Append({0x00, 0x17}); // extension type: extended master secret
+    Append({0x00, 0x00}); // extension length: 0
 
-    send_tcp += {'\x00', '\x0d'}; // extension type: signature algorithms
-    send_tcp += {'\x00', '\x1e'}; // extension length: 30
-    send_tcp += {'\x00', '\x1c'}; // signature algorithms length: 28
-    send_tcp += {'\x08', '\x07'}; // ED25519
-    send_tcp += {'\x04', '\x03'}; // ECDSA-SECP256r1-SHA256
-    send_tcp += {'\x05', '\x03'}; // ECDSA-SECP384r1-SHA384
-    send_tcp += {'\x06', '\x03'}; // ECDSA-SECP521r1-SHA512
-    send_tcp += {'\x08', '\x08'}; // ED448
-    send_tcp += {'\x08', '\x09'}; // RSA-PSS-PSS-SHA256
-    send_tcp += {'\x08', '\x0a'}; // RSA-PSS-PSS-SHA384
-    send_tcp += {'\x08', '\x0b'}; // RSA-PSS-PSS-SHA512
-    send_tcp += {'\x08', '\x04'}; // RSA-PSS-RSAE-SHA256
-    send_tcp += {'\x08', '\x05'}; // RSA-PSS-RSAE-SHA384
-    send_tcp += {'\x08', '\x06'}; // RSA-PSS-RSAE-SHA512
-    send_tcp += {'\x04', '\x01'}; // RSA-PKCS1-SHA256
-    send_tcp += {'\x05', '\x01'}; // RSA-PKCS1-SHA384
-    send_tcp += {'\x06', '\x01'}; // RSA-PKCS1-SHA512
+    Append({0x00, 0x0d}); // extension type: signature algorithms
+    Append({0x00, 0x1e}); // extension length: 30
+    Append({0x00, 0x1c}); // signature algorithms length: 28
+    Append({0x08, 0x07}); // ED25519
+    Append({0x04, 0x03}); // ECDSA-SECP256r1-SHA256
+    Append({0x05, 0x03}); // ECDSA-SECP384r1-SHA384
+    Append({0x06, 0x03}); // ECDSA-SECP521r1-SHA512
+    Append({0x08, 0x08}); // ED448
+    Append({0x08, 0x09}); // RSA-PSS-PSS-SHA256
+    Append({0x08, 0x0a}); // RSA-PSS-PSS-SHA384
+    Append({0x08, 0x0b}); // RSA-PSS-PSS-SHA512
+    Append({0x08, 0x04}); // RSA-PSS-RSAE-SHA256
+    Append({0x08, 0x05}); // RSA-PSS-RSAE-SHA384
+    Append({0x08, 0x06}); // RSA-PSS-RSAE-SHA512
+    Append({0x04, 0x01}); // RSA-PKCS1-SHA256
+    Append({0x05, 0x01}); // RSA-PKCS1-SHA384
+    Append({0x06, 0x01}); // RSA-PKCS1-SHA512
 
-    send_tcp += {'\x00', '\x2b'}; // extension type: supported versions
-    send_tcp += {'\x00', '\x03'}; // extension length: 3
-    send_tcp += {'\x02'};         // supported versions length: 2
-    send_tcp += {'\x03', '\x04'}; // TLS 1.3
+    Append({0x00, 0x2b}); // extension type: supported versions
+    Append({0x00, 0x03}); // extension length: 3
+    Append({0x02});       // supported versions length: 2
+    Append({0x03, 0x04}); // TLS 1.3
 
-    send_tcp += {'\x00', '\x2d'}; // extension type: PSK key exchange modes
-    send_tcp += {'\x00', '\x02'}; // extension length: 2
-    send_tcp += {'\x01'};         // PSK key exchange modes length: 1
-    send_tcp += {'\x01'};         // PSK key exchange mode: PSK with (EC)DHE
+    Append({0x00, 0x2d}); // extension type: PSK key exchange modes
+    Append({0x00, 0x02}); // extension length: 2
+    Append({0x01});       // PSK key exchange modes length: 1
+    Append({0x01});       // PSK key exchange mode: PSK with (EC)DHE
 
-    send_tcp += {'\x00', '\x33'}; // extension type: key share
-    send_tcp += {'\x00', '\x26'}; // extension length: 38
-    send_tcp += {'\x00', '\x24'}; // key share length: 36
-    send_tcp += {'\x00', '\x1d'}; // x25519
-    send_tcp += {'\x00', '\x20'}; // public key length: 32
-    send_tcp.append(client_public.bytes.begin(), client_public.bytes.end());
+    Append({0x00, 0x33}); // extension type: key share
+    Append({0x00, 0x26}); // extension length: 38
+    Append({0x00, 0x24}); // key share length: 36
+    Append({0x00, 0x1d}); // x25519
+    Append({0x00, 0x20}); // public key length: 32
+    send_tcp.insert(send_tcp.end(), client_public.bytes.begin(),
+                    client_public.bytes.end());
 
     PutBigEndian<U16>(send_tcp, extensions_length_offset,
                       send_tcp.size() - extensions_begin);
@@ -152,10 +157,29 @@ struct Phase1 : Phase {
     PutBigEndian<U16>(send_tcp, record_length_offset,
                       send_tcp.size() - record_begin);
 
+    sha_builder.Update(
+        MemView((U8 *)&send_tcp[record_begin], send_tcp.size() - record_begin));
+
     conn.SendTCP();
   }
 
-  void ProcessServerHello(Connection &conn, MemView server_hello) {
+  void ProcessHandshake(Connection &conn, MemView handshake) {
+    MemView server_hello = handshake;
+    U8 handshake_type = ConsumeBigEndian<U8>(server_hello);
+    U24 handshake_length = ConsumeBigEndian<U24>(server_hello);
+    if (handshake_length > server_hello.size()) {
+      conn.status() += f("TLS Handshake Header claims length %d but there are "
+                         "only %d bytes left in the record",
+                         handshake_length, server_hello.size());
+      return;
+    }
+    if (handshake_type != 2) {
+      conn.status() += f("Received TLS handshake type %d but expected 2 "
+                         "(Server Hello)",
+                         handshake_type);
+      return;
+    }
+
     U8 server_version_major = ConsumeBigEndian<U8>(server_hello);
     U8 server_version_minor = ConsumeBigEndian<U8>(server_hello);
     server_hello = server_hello.subspan<32>(); // server random
@@ -222,28 +246,16 @@ struct Phase1 : Phase {
         }
         break;
       }
-      }
-    }
-  }
+      } // switch (extension_type)
+    }   // while (!server_hello.empty())
 
-  void ProcessHandshake(Connection &conn, MemView contents) {
-    U8 handshake_type = ConsumeBigEndian<U8>(contents);
-    U24 handshake_length = ConsumeBigEndian<U24>(contents);
-    if (handshake_length > contents.size()) {
-      conn.status() += f("TLS Handshake Header claims length %d but there are "
-                         "only %d bytes left in the record",
-                         handshake_length, contents.size());
-      return;
-    }
-    switch (handshake_type) {
-    case 2:
-      ProcessServerHello(conn, contents);
-      break;
-    default:
-      conn.status() += f("Received TLS handshake type %d but expected 2 "
-                         "(Server Hello)",
-                         handshake_type);
-    }
+    sha_builder.Update(handshake);
+    auto backup_builder = sha_builder;
+    auto sha = backup_builder.Finalize();
+    curve25519::Shared shared_secret =
+        curve25519::Shared::FromPrivateAndPublic(client_secret, server_public);
+    LOG << "SHA: " << BytesToHex(sha.bytes);
+    LOG << "shared secret: " << BytesToHex(shared_secret.bytes);
   }
 
   void ProcessRecord(Connection &conn, U8 type, MemView contents) override {
@@ -318,7 +330,7 @@ static_assert(sizeof(RecordHeader) == 5,
               "tls::RecordHeader should have 5 bytes");
 
 Size ConsumeRecord(Connection &conn) {
-  Str &received_tcp = conn.received_tcp;
+  MemBuf &received_tcp = conn.received_tcp;
   if (received_tcp.size() < 5) {
     return 0; // wait for more data
   }
@@ -347,7 +359,7 @@ void Connection::NotifyReceivedTCP() {
     if (n == 0) {
       return;
     }
-    received_tcp.erase(0, n);
+    received_tcp.erase(received_tcp.begin(), received_tcp.begin() + n);
   }
 }
 

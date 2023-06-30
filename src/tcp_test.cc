@@ -14,7 +14,7 @@ TEST(TCPTest, SimpleExchange) {
   struct ClientConnection : tcp::Connection {
     ClientConnection() {
       ConnectTCP({.remote_port = 1234});
-      send_tcp += "Hello from client!";
+      send_tcp.push_back(0x11);
       SendTCP();
     }
 
@@ -25,7 +25,7 @@ TEST(TCPTest, SimpleExchange) {
     ServerConnection connection;
     void NotifyAcceptedTCP(FD fd, IP ip, U16 port) override {
       connection.Adopt(std::move(fd));
-      connection.send_tcp += "Hello from server!";
+      connection.send_tcp.push_back(0x22);
       connection.SendTCP();
       StopListening();
     }
@@ -49,15 +49,15 @@ TEST(TCPTest, SimpleExchange) {
   EXPECT_TRUE(client_connection.status.Ok())
       << client_connection.status.ToString();
 
-  EXPECT_EQ(server.connection.received_tcp, "Hello from client!");
-  EXPECT_EQ(client_connection.received_tcp, "Hello from server!");
+  EXPECT_EQ(server.connection.received_tcp, MemBuf{0x11});
+  EXPECT_EQ(client_connection.received_tcp, MemBuf{0x22});
 }
 
 TEST(TCPTest, LargePayload) {
   struct ClientConnection : tcp::Connection {
     ClientConnection() {
       ConnectTCP({.remote_port = 1234});
-      send_tcp.append(1024 * 1024, 'c');
+      send_tcp.insert(send_tcp.end(), 1024 * 1024, 'c');
       closing = true;
       SendTCP();
     }
@@ -90,7 +90,7 @@ TEST(TCPTest, LargePayload) {
   EXPECT_TRUE(status.Ok()) << status.ToString();
 
   EXPECT_EQ(server.connection.received_tcp.size(), 1024 * 1024);
-  EXPECT_EQ(client_connection.received_tcp, "");
+  EXPECT_EQ(client_connection.received_tcp, MemBuf{});
 }
 
 TEST(TCPTest, ManyClients) {
@@ -103,12 +103,12 @@ TEST(TCPTest, ManyClients) {
     ClientConnection() {
       ConnectTCP({.remote_port = 1234});
       ++active_clients;
-      send_tcp += "PING";
+      send_tcp.insert(send_tcp.end(), {1, 2, 3});
       SendTCP();
     }
 
     void NotifyReceivedTCP() override {
-      if (received_tcp == "PONG") {
+      if (received_tcp == MemBuf{4, 5, 6}) {
         ++ping_pongs;
         CloseTCP();
         --active_clients;
@@ -122,8 +122,8 @@ TEST(TCPTest, ManyClients) {
   struct ServerConnection : tcp::Connection {
     ServerConnection(FD fd) { Adopt(std::move(fd)); }
     void NotifyReceivedTCP() override {
-      if (received_tcp == "PING") {
-        send_tcp += "PONG";
+      if (received_tcp == MemBuf{1, 2, 3}) {
+        send_tcp.insert(send_tcp.end(), {4, 5, 6});
         closing = true;
         SendTCP();
       }

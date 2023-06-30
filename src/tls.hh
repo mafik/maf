@@ -6,9 +6,6 @@
 #include "tcp.hh"
 #include "unique_ptr.hh"
 
-// TODO: Implement SHA-256
-// TODO: Compute SHA-256 of Client Hello & Server Hello
-// TODO: Compute shared secret using Curve25519
 // TODO: Implement HKDF
 // TODO: Compute handshake secrets (milestone!)
 // TODO: ChaCha20+Poly1305 https://www.rfc-editor.org/rfc/rfc8439.html
