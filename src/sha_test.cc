@@ -1,8 +1,8 @@
-#include "hex.hh"
 #include "sha.hh"
 
 #include <gtest/gtest.h>
 
+#include "hex.hh"
 #include "str.hh"
 
 using namespace maf;

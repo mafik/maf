@@ -3,7 +3,6 @@
 #include "int.hh"
 #include "span.hh"
 #include "vec.hh"
-#include <span>
 
 namespace maf {
 
