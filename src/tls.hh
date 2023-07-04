@@ -6,7 +6,7 @@
 #include "tcp.hh"
 #include "unique_ptr.hh"
 
-// TODO: ChaCha20 https://www.rfc-editor.org/rfc/rfc8439.html
+// TODO: ChaCha20-Poly1305 AEAD
 // TODO: RFC Compliance https://datatracker.ietf.org/doc/html/rfc8446#section-9
 
 // # Timeline of what is needed & when
