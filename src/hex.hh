@@ -7,7 +7,7 @@ namespace maf {
 
 void HexToBytesUnchecked(StrView hex, U8 *out_bytes);
 
-Str BytesToHex(MemView bytes);
+Str BytesToHex(Span<const U8> bytes);
 
 inline MemBuf operator""_HexMemBuf(const char *str, size_t len) {
   MemBuf buf;

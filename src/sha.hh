@@ -24,8 +24,8 @@ struct SHA256 {
   SHA256() = default;
 
   // Compute a SHA256 of a memory buffer in one go.
-  SHA256(MemView);
-  SHA256(StrView s) : SHA256(MemView((U8 *)s.data(), s.size())) {}
+  SHA256(Span<const U8>);
+  SHA256(StrView s) : SHA256(Span<const U8>((const U8 *)s.data(), s.size())) {}
 
   struct Builder {
     U32 state[8];
@@ -33,11 +33,12 @@ struct SHA256 {
     U64 n_bits;
     U8 buffer_counter;
     Builder();
-    Builder &Update(MemView);
+    Builder &Update(Span<const U8>);
     SHA256 Finalize();
   };
 
   operator MemView() { return bytes; }
+  operator Span<const U8>() const { return bytes; }
 };
 
 struct SHA512 {
@@ -65,6 +66,7 @@ struct SHA512 {
   };
 
   operator MemView() { return bytes; }
+  operator Span<const U8>() const { return bytes; }
 };
 
 } // namespace maf

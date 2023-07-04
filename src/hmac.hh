@@ -6,7 +6,8 @@
 
 namespace maf {
 
-template <typename Hash> Arr<U8, Hash::kBlockSize> HMAC_FixedKey(MemView key) {
+template <typename Hash>
+Arr<U8, Hash::kBlockSize> HMAC_FixedKey(Span<const U8> key) {
   Arr<U8, Hash::kBlockSize> fixed_key;
   if (key.size() > Hash::kBlockSize) {
     Hash h(key);
@@ -21,7 +22,7 @@ template <typename Hash> Arr<U8, Hash::kBlockSize> HMAC_FixedKey(MemView key) {
   return fixed_key;
 }
 
-template <typename Hash> Hash HMAC(MemView key, MemView m) {
+template <typename Hash> Hash HMAC(Span<const U8> key, Span<const U8> m) {
   Arr<U8, Hash::kBlockSize> fixed_key = HMAC_FixedKey<Hash>(key);
   for (int i = 0; i < Hash::kBlockSize; ++i) {
     fixed_key[i] ^= 0x36;

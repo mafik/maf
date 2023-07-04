@@ -5,7 +5,8 @@
 
 namespace maf {
 
-template <typename Hash> Hash HKDF_Extract(MemView salt, MemView ikm) {
+template <typename Hash>
+Hash HKDF_Extract(Span<const U8> salt, Span<const U8> ikm) {
   return HMAC<Hash>(salt, ikm);
 }
 

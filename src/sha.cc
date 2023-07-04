@@ -459,7 +459,7 @@ static void AppendByte(SHA256::Builder &builder, uint8_t byte) {
   }
 }
 
-SHA256::Builder &SHA256::Builder::Update(MemView mem) {
+SHA256::Builder &SHA256::Builder::Update(Span<const U8> mem) {
   for (auto byte : mem) {
     AppendByte(*this, byte);
   }
@@ -489,7 +489,7 @@ static void FinalizeTo(SHA256::Builder &builder, SHA256 &out_sha) {
   }
 }
 
-SHA256::SHA256(MemView mem) {
+SHA256::SHA256(Span<const U8> mem) {
   Builder builder;
   builder.Update(mem);
   FinalizeTo(builder, *this);

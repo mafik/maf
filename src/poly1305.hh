@@ -1,7 +1,7 @@
 #pragma once
 
 #include "int.hh"
-#include "mem.hh"
+#include "span.hh"
 
 namespace maf {
 
@@ -12,6 +12,8 @@ struct Poly1305 {
 
   // Construct an uninitialized Poly1305.
   Poly1305() = default;
+
+  Poly1305(Span<const U8, 16> buffer);
 
   // Compute a Poly1305 of a memory buffer in one go.
   Poly1305(Span<const U8> m, Span<const U8, 32> key);
@@ -29,7 +31,7 @@ struct Poly1305 {
     Poly1305 Finalize();
   };
 
-  operator MemView() { return bytes; }
+  operator Span<const U8>() const { return bytes; }
 };
 
 } // namespace maf

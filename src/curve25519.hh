@@ -34,7 +34,7 @@ struct Shared {
 
   static Shared FromPrivateAndPublic(const Private &, const Public &);
 
-  operator MemView() { return bytes; }
+  operator Span<const U8>() const { return bytes; }
 };
 
 } // namespace maf::curve25519

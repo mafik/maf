@@ -26,7 +26,9 @@ struct ChaCha20 {
   // `counter` will be updated by the number of blocks encrypted.
   void Crypt(MemView);
 
-  operator MemView() { return MemView((U8 *)this, sizeof(*this)); }
+  operator Span<const U8>() const {
+    return Span<const U8>((const U8 *)this, sizeof(*this));
+  }
 };
 
 } // namespace rfc7539

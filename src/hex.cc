@@ -26,7 +26,7 @@ void HexToBytesUnchecked(StrView hex, U8 *bytes) {
   }
 }
 
-Str BytesToHex(MemView bytes) {
+Str BytesToHex(Span<const U8> bytes) {
   Str result;
   result.reserve(bytes.size() * 2);
   for (U8 byte : bytes) {

@@ -1,4 +1,5 @@
 #include "poly1305.hh"
+
 #include "int.hh"
 
 // From https://github.com/floodyberry/poly1305-donna (public domain)
@@ -189,6 +190,10 @@ static void FinalizeTo(Poly1305::Builder &builder, Poly1305 &mac) {
   builder.pad[0] = 0;
   builder.pad[1] = 0;
 }
+
+Poly1305::Poly1305(Span<const U8, 16> b)
+    : bytes{b[0], b[1], b[2],  b[3],  b[4],  b[5],  b[6],  b[7],
+            b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]} {}
 
 Poly1305::Poly1305(Span<const U8> m, Span<const U8, 32> key) {
   Builder builder(key);
