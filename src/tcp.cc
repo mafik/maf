@@ -188,7 +188,7 @@ void Connection::SendTCP() {
 void Connection::CloseTCP() {
   epoll::Del(this, status);
   shutdown(fd, SHUT_RDWR);
-  close(fd);
+  fd.Close();
 }
 
 thread_local static U8 read_buffer[1024 * 1024];

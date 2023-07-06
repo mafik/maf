@@ -1,8 +1,11 @@
 #include "tls.hh"
 
+#include <algorithm>
 #include <cstring>
 #include <initializer_list>
+#include <optional>
 
+#include "aead_chacha20_poly1305.hh"
 #include "big_endian.hh"
 #include "curve25519.hh"
 #include "format.hh"
@@ -10,20 +13,42 @@
 #include "hkdf.hh"
 #include "int.hh"
 #include "log.hh"
+#include "poly1305.hh"
 #include "sha.hh"
 
 namespace maf::tls {
 
 // Nice introduction to TLS 1.3: https://tls13.xargs.org/
 
-// Phase for the encrypted application part (after "Client/Server Handshake
-// Finished").
-struct Phase3 {
-  Arr<U8, 32> client_application_key;
-  Arr<U8, 32> server_application_key;
-  Arr<U8, 12> client_application_iv;
-  Arr<U8, 12> server_application_iv;
+// TODO: Remove unsupported ciphers
+
+struct RecordHeader {
+  U8 type;
+  U8 version_major;
+  U8 version_minor;
+  Big<U16> length;
+  U8 contents[0];
+
+  void Validate(Status &status) {
+    if (version_major != 3) {
+      status() += "TLS Record Header major version is " +
+                  std::to_string(version_major) + " but expected 3";
+      return;
+    }
+    if (version_minor != 1 && version_minor != 3 && version_minor != 4) {
+      status() += "TLS Record Header minor version is " +
+                  std::to_string(version_minor) +
+                  " but expected 3 (TLS 1.2) or 4 (TLS 1.3)";
+      return;
+    }
+  }
+
+  operator Span<const U8>() { return {(U8 *)this, sizeof(RecordHeader)}; }
+  MemView Contents() { return {contents, length.get()}; }
 };
+
+static_assert(sizeof(RecordHeader) == 5,
+              "tls::RecordHeader should have 5 bytes");
 
 void HKDF_Expand_Label(MemView key, StrView label, MemView ctx, MemView out) {
   MemBuf hkdf_label;
@@ -38,64 +63,342 @@ void HKDF_Expand_Label(MemView key, StrView label, MemView ctx, MemView out) {
 Arr<U8, 32> zero_key = {};
 SHA256 early_secret = HKDF_Extract<SHA256>("\x00"_MemView, zero_key);
 SHA256 empty_hash("");
+Arr<U8, 6> kClientChangeCipherSpec = HexArr("140303000101");
+
+static void XorIV(Arr<U8, 12> &iv, U64 counter) {
+  for (int i = 0; i < sizeof(counter); ++i) {
+    iv[11 - i] ^= (counter >> (i * 8)) & 0xff;
+  }
+}
+
+// Responsible for encrypting & decrypting TLS records
+struct RecordWrapper {
+  Arr<U8, 32> key;
+  Arr<U8, 12> iv;
+  U64 counter = 0;
+
+  // Constructs uninitialized RecordWrapper
+  RecordWrapper() = default;
+
+  RecordWrapper(Span<U8, 32> secret) {
+    HKDF_Expand_Label(secret, "tls13 key", ""_MemView, key);
+    HKDF_Expand_Label(secret, "tls13 iv", ""_MemView, iv);
+  }
+
+  void Wrap(MemBuf &buf, U8 record_type, std::function<void()> wrapped) {
+    Size header_begin = buf.size();
+    buf.insert(buf.end(), {0x17, 0x03, 0x03, 0x00,
+                           0x00}); // application data, TLS 1.2, length
+    Size header_end = buf.size();
+    Size record_length_offset = buf.size() - 2;
+    Size record_begin = buf.size();
+    wrapped();
+    buf.push_back(record_type);
+    Size record_end = buf.size();
+    Size tag_begin = buf.size();
+    buf.insert(buf.end(), 16, 0); // Poly1305 tag
+    Size tag_end = buf.size();
+    PutBigEndian<U16>(buf, record_length_offset, tag_end - record_begin);
+    XorIV(iv, counter);
+    auto data = MemView(buf.begin() + record_begin, buf.begin() + record_end);
+    auto aad = MemView(buf.begin() + header_begin, buf.begin() + header_end);
+    auto tag = Encrypt_AEAD_CHACHA20_POLY1305(key, iv, data, aad);
+    XorIV(iv, counter);
+    ++counter;
+    memcpy(buf.data() + tag_begin, tag.bytes, 16);
+  }
+
+  // TODO: Unwrap should return the wrapped type (U8)
+  Optional<MemView> Unwrap(RecordHeader &record) {
+    auto contents = record.Contents();
+    Poly1305 tag(contents.last<16>());
+    MemView data = contents.subspan(0, contents.size() - 16);
+    XorIV(iv, counter);
+    bool decrypted_ok =
+        Decrypt_AEAD_CHACHA20_POLY1305(key, iv, data, record, tag);
+    XorIV(iv, counter);
+    ++counter;
+    if (decrypted_ok) {
+      return data;
+    } else {
+      return std::nullopt;
+    }
+  }
+};
+
+StrView AlertLevelToString(U8 level) {
+  switch (level) {
+  case 1:
+    return "warning";
+  case 2:
+    return "fatal";
+  default:
+    return "unknown";
+  }
+}
+
+StrView AlertDescriptionToString(U8 desc) {
+  switch (desc) {
+  case 0:
+    return "close_notify";
+  case 10:
+    return "unexpected_message";
+  case 20:
+    return "bad_record_mac";
+  case 21:
+    return "decryption_failed";
+  case 22:
+    return "record_overflow";
+  case 30:
+    return "decompression_failure";
+  case 40:
+    return "handshake_failure";
+  case 41:
+    return "no_certificate";
+  case 42:
+    return "bad_certificate";
+  case 43:
+    return "unsupported_certificate";
+  case 44:
+    return "certificate_revoked";
+  case 45:
+    return "certificate_expired";
+  case 46:
+    return "certificate_unknown";
+  case 47:
+    return "illegal_parameter";
+  case 48:
+    return "unknown_ca";
+  case 49:
+    return "access_denied";
+  case 50:
+    return "decode_error";
+  case 51:
+    return "decrypt_error";
+  case 60:
+    return "export_restriction";
+  case 70:
+    return "protocol_version";
+  case 71:
+    return "insufficient_security";
+  case 80:
+    return "internal_error";
+  case 86:
+    return "inappropriate_fallback";
+  case 90:
+    return "user_canceled";
+  case 100:
+    return "no_renegotiation";
+  case 110:
+    return "unsupported_extension";
+  case 111:
+    return "certificate_unobtainable";
+  case 112:
+    return "unrecognized_name";
+  case 113:
+    return "bad_certificate_status_response";
+  case 114:
+    return "bad_certificate_hash_value";
+  case 115:
+    return "unknown_psk_identity";
+  case 116:
+    return "certificate_required";
+  case 117:
+    return "no_application_protocol";
+  default:
+    return "unknown";
+  }
+}
+
+// Phase for the encrypted application part (after "Client/Server Handshake
+// Finished").
+struct Phase3 : Phase {
+  Connection &conn;
+  RecordWrapper server_wrapper;
+  RecordWrapper client_wrapper;
+
+  Phase3(Connection &conn, SHA256 handshake_secret, SHA256 handshake_hash)
+      : conn(conn) {
+    Arr<U8, 32> derived, client_secret, server_secret; // Hash-size-bytes
+    HKDF_Expand_Label(handshake_secret, "tls13 derived", empty_hash, derived);
+    auto master_secret = HKDF_Extract<SHA256>(derived, zero_key);
+    HKDF_Expand_Label(master_secret, "tls13 c ap traffic", handshake_hash,
+                      client_secret);
+    HKDF_Expand_Label(master_secret, "tls13 s ap traffic", handshake_hash,
+                      server_secret);
+    server_wrapper = RecordWrapper(server_secret);
+    client_wrapper = RecordWrapper(client_secret);
+  }
+
+  void ProcessRecord(Connection &conn, RecordHeader &record) override {
+    if (record.type != 23) {
+      conn.status() += f("Received TLS record type %d but expected 23 "
+                         "(Application Data Record)",
+                         record.type);
+      return;
+    }
+    auto data_opt = server_wrapper.Unwrap(record);
+    if (!data_opt.has_value()) {
+      conn.status() += "Couldn't decrypt TLS record";
+      return;
+    }
+    auto data = data_opt.value();
+    U8 true_type = data.back();
+    data = data.subspan(0, data.size() - 1);
+
+    if (true_type == 21) { // Alert
+      if (data.size() != 2) {
+        conn.status() +=
+            f("Received TLS Alert with length %d but expected 2", data.size());
+        return;
+      }
+      U8 level = data[0];
+      U8 description = data[1];
+      Str &msg = conn.status();
+      msg += "Received ";
+      msg += AlertLevelToString(level);
+      msg += " TLS Alert: ";
+      msg += AlertDescriptionToString(description);
+      return;
+    } else if (true_type == 22) { // Handshake
+      return;                     // Ignore because we don't use tickets anyway
+    } else if (true_type == 23) { // Application Data
+      // TODO: there is a bug here because the data might have been split into
+      // multiple chunks within a single records
+      conn.received_tls.insert(conn.received_tls.end(), data.begin(),
+                               data.end());
+      conn.NotifyReceivedTLS();
+    } else {
+      conn.status() += f("Received unknown TLS record type %d", true_type);
+    }
+  }
+
+  void SendTLS() override {
+    client_wrapper.Wrap(conn.send_tcp, 0x17, [&]() {
+      conn.send_tcp.insert(conn.send_tcp.end(), conn.send_tls.begin(),
+                           conn.send_tls.end());
+    });
+    conn.SendTCP();
+  }
+};
 
 // Phase for the encrypted handshake part (between "Server Hello" & "Server
 // Handshake Finished").
 struct Phase2 : Phase {
-  SHA256::Builder sha_builder;
+  SHA256::Builder handshake_hash_builder;
   SHA256 handshake_secret;
-  Arr<U8, 32> client_handshake_key;
-  Arr<U8, 32> server_handshake_key;
-  Arr<U8, 12> client_handshake_iv;
-  Arr<U8, 12> server_handshake_iv;
+  Arr<U8, 32> client_secret;
+  RecordWrapper server_wrapper;
+  RecordWrapper client_wrapper;
+  bool send_tls_requested;
 
-  Phase2(SHA256::Builder sha_builder, curve25519::Shared shared_secret)
-      : sha_builder(std::move(sha_builder)) {
-    auto backup_builder = sha_builder;
-    auto hello_hash = backup_builder.Finalize();
-    Arr<U8, 32> derived_secret, client_secret, server_secret; // Hash-size-bytes
+  Phase2(SHA256::Builder sha_builder, curve25519::Shared shared_secret,
+         bool send_tls_requested)
+      : handshake_hash_builder(std::move(sha_builder)),
+        send_tls_requested(send_tls_requested) {
+    auto hello_hash_builder = handshake_hash_builder;
+    auto hello_hash = hello_hash_builder.Finalize();
+    Arr<U8, 32> derived, server_secret; // Hash-size-bytes
 
-    HKDF_Expand_Label(early_secret, "tls13 derived", empty_hash,
-                      derived_secret);
-    handshake_secret = HKDF_Extract<SHA256>(derived_secret, shared_secret);
+    HKDF_Expand_Label(early_secret, "tls13 derived", empty_hash, derived);
+    handshake_secret = HKDF_Extract<SHA256>(derived, shared_secret);
     HKDF_Expand_Label(handshake_secret, "tls13 c hs traffic", hello_hash,
                       client_secret);
     HKDF_Expand_Label(handshake_secret, "tls13 s hs traffic", hello_hash,
                       server_secret);
-    HKDF_Expand_Label(client_secret, "tls13 key", ""_MemView,
-                      client_handshake_key);
-    HKDF_Expand_Label(server_secret, "tls13 key", ""_MemView,
-                      server_handshake_key);
-    HKDF_Expand_Label(client_secret, "tls13 iv", ""_MemView,
-                      client_handshake_iv);
-    HKDF_Expand_Label(server_secret, "tls13 iv", ""_MemView,
-                      server_handshake_iv);
-    LOG << "hello_hash=" << BytesToHex(hello_hash);
-    LOG << "shared_secret=" << BytesToHex(shared_secret);
-    LOG << "zero_key=" << BytesToHex(zero_key);
-    LOG << "early_secret=" << BytesToHex(early_secret);
-    LOG << "derived_secret=" << BytesToHex(derived_secret);
-    LOG << "handshake_secret=" << BytesToHex(handshake_secret);
-    LOG << "client_secret=" << BytesToHex(client_secret);
-    LOG << "server_secret=" << BytesToHex(server_secret);
-    LOG << "client_handshake_key=" << BytesToHex(client_handshake_key);
-    LOG << "server_handshake_key=" << BytesToHex(server_handshake_key);
-    LOG << "client_handshake_iv=" << BytesToHex(client_handshake_iv);
-    LOG << "server_handshake_iv=" << BytesToHex(server_handshake_iv);
+    server_wrapper = RecordWrapper(server_secret);
+    client_wrapper = RecordWrapper(client_secret);
   }
 
-  void ProcessRecord(Connection &conn, U8 type, MemView contents) override {
+  void ProcessRecord(Connection &conn, RecordHeader &record) override {
+    auto type = record.type;
     if (type == 20) { // Change Cipher Spec - ignore
       return;
     }
-    conn.status() += f("Received TLS record type %d", type);
+    if (type != 23) { // Application Data
+      conn.status() += f("Received TLS record type %d", type);
+      return;
+    }
+    auto data_opt = server_wrapper.Unwrap(record);
+    if (!data_opt.has_value()) {
+      conn.status() += "Couldn't decrypt TLS record";
+      return;
+    }
+    auto data = data_opt.value();
+
+    U8 true_type = data.back();
+    if (true_type != 22) { // Handshake
+      conn.status() +=
+          f("Received TLS record type %d but expected 22 (Handshake Record)",
+            true_type);
+      return;
+    }
+    data = data.subspan(0, data.size() - 1);
+    handshake_hash_builder.Update(data);
+
+    while (!data.empty()) {
+      U8 handshake_type = ConsumeBigEndian<U8>(data);
+      U24 handshake_length = ConsumeBigEndian<U24>(data);
+      if (handshake_length > data.size()) {
+        conn.status() +=
+            "TLS handshake failed because of record with invalid length";
+        return;
+      }
+      auto handshake_data = data.subspan(0, handshake_length);
+      data = data.subspan(handshake_length);
+
+      if (handshake_type == 8) {
+        // "Server Encrypted Extensions"
+      } else if (handshake_type == 11) {
+        // "Server Certificate"
+      } else if (handshake_type == 15) {
+        // "Server Certificate Verify"
+      } else if (handshake_type == 20) {
+        // "Server Handshake Finished"
+        auto handshake_hash = handshake_hash_builder.Finalize();
+
+        conn.send_tcp.insert(conn.send_tcp.end(),
+                             kClientChangeCipherSpec.begin(),
+                             kClientChangeCipherSpec.end());
+
+        client_wrapper.Wrap(conn.send_tcp, 0x16, [&]() {
+          Arr<U8, 32> finished_key; // Hash-size-bytes
+          HKDF_Expand_Label(client_secret, "tls13 finished", ""_MemView,
+                            finished_key);
+          SHA256 verify_data = HMAC<SHA256>(finished_key, handshake_hash);
+          auto &buf = conn.send_tcp;
+          buf.push_back(0x14); // handshake
+          AppendBigEndian<U24>(buf, 32);
+          buf.insert(buf.end(), verify_data.bytes, verify_data.bytes + 32);
+        });
+
+        bool send_tls_requested =
+            this->send_tls_requested; // copy to avoid use-after-free
+        conn.phase.reset(new Phase3(conn, handshake_secret, handshake_hash));
+        if (send_tls_requested) {
+          // Encrypt contents of `send_tls` and send it along with `Client
+          // Verify`.
+          conn.phase->SendTLS();
+        } else {
+          conn.SendTCP();
+        }
+      } else {
+        conn.status() +=
+            f("TLS handshake failed because of unknown message type %d",
+              handshake_type);
+        return;
+      }
+    }
   }
+
+  void SendTLS() override { send_tls_requested = true; }
 };
 
 // Phase for the plaintext handshake part (before "Server Hello").
 struct Phase1 : Phase {
   SHA256::Builder sha_builder;
   curve25519::Private client_secret;
+  bool send_tls_requested = false;
 
   Phase1(Connection &conn, Connection::Config &config) {
     Status &status = conn.status;
@@ -331,19 +634,21 @@ struct Phase1 : Phase {
     curve25519::Shared shared_secret =
         curve25519::Shared::FromPrivateAndPublic(client_secret, server_public);
 
-    conn.phase.reset(new Phase2(std::move(sha_builder), shared_secret));
+    conn.phase.reset(
+        new Phase2(std::move(sha_builder), shared_secret, send_tls_requested));
   }
 
-  void ProcessRecord(Connection &conn, U8 type, MemView contents) override {
-    LOG << "Processing record " << type << " " << BytesToHex(contents);
-    if (type == 0x16) { // handshake
-      ProcessHandshake(conn, contents);
+  void ProcessRecord(Connection &conn, RecordHeader &record) override {
+    if (record.type == 0x16) { // handshake
+      ProcessHandshake(conn, record.Contents());
     } else {
       conn.status() += f("Received TLS record type %d but expected 22 "
                          "(TLS Handshake)",
-                         type);
+                         record.type);
     }
   }
+
+  void SendTLS() override { send_tls_requested = true; }
 };
 
 void Connection::ConnectTLS(Config config) {
@@ -353,41 +658,11 @@ void Connection::ConnectTLS(Config config) {
 }
 
 void Connection::SendTLS() {
-  LOG << "Sending " << send_tls;
+  phase->SendTLS();
   SendTCP();
 }
 
-void Connection::CloseTLS() {
-  LOG << "TLS connection closed";
-  CloseTCP();
-}
-
-struct RecordHeader {
-  U8 type;
-  U8 version_major;
-  U8 version_minor;
-  Big<U16> length;
-  U8 tail[0];
-
-  void Validate(Status &status) {
-    if (version_major != 3) {
-      status() += "TLS Record Header major version is " +
-                  std::to_string(version_major) + " but expected 3";
-      return;
-    }
-    if (version_minor != 1 && version_minor != 3 && version_minor != 4) {
-      status() += "TLS Record Header minor version is " +
-                  std::to_string(version_minor) +
-                  " but expected 3 (TLS 1.2) or 4 (TLS 1.3)";
-      return;
-    }
-  }
-
-  MemView Contents() { return MemView{tail, length.get()}; }
-};
-
-static_assert(sizeof(RecordHeader) == 5,
-              "tls::RecordHeader should have 5 bytes");
+void Connection::CloseTLS() { CloseTCP(); }
 
 Size ConsumeRecord(Connection &conn) {
   MemBuf &received_tcp = conn.received_tcp;
@@ -404,7 +679,7 @@ Size ConsumeRecord(Connection &conn) {
   if (received_tcp.size() < record_size) {
     return 0; // wait for more data
   }
-  conn.phase->ProcessRecord(conn, record_header.type, record_header.Contents());
+  conn.phase->ProcessRecord(conn, record_header);
   return record_size;
 }
 

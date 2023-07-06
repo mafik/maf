@@ -15,6 +15,7 @@ namespace maf::curve25519 {
 struct Private {
   Arr<U8, 32> bytes;
 
+  static Private From32Bytes(Span<const U8, 32> bytes);
   static Private FromDevUrandom(Status &);
 
   operator MemView() { return bytes; }

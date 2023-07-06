@@ -495,6 +495,19 @@ int curve25519_donna(U8 *mypublic, const U8 *secret, const U8 *basepoint) {
 
 namespace maf::curve25519 {
 
+static void Sanitize(Private &key) {
+  key.bytes[0] &= 248;
+  key.bytes[31] &= 127;
+  key.bytes[31] |= 64;
+}
+
+Private Private::From32Bytes(Span<const U8, 32> bytes) {
+  Private result = {};
+  memcpy(result.bytes.data(), bytes.data(), 32);
+  Sanitize(result);
+  return result;
+}
+
 Private Private::FromDevUrandom(Status &status) {
   Private result = {};
   int fd = open("/dev/urandom", O_RDONLY);
@@ -509,9 +522,7 @@ Private Private::FromDevUrandom(Status &status) {
     return result;
   }
   close(fd);
-  result.bytes[0] &= 248;
-  result.bytes[31] &= 127;
-  result.bytes[31] |= 64;
+  Sanitize(result);
   return result;
 }
 

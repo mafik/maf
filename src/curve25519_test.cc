@@ -1,5 +1,4 @@
 #include "curve25519.hh"
-#include "int.hh"
 
 #include <gtest/gtest.h>
 
