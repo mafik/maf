@@ -15,6 +15,7 @@
 #include "log.hh"
 #include "poly1305.hh"
 #include "sha.hh"
+#include "status.hh"
 
 namespace maf::tls {
 
@@ -232,14 +233,14 @@ struct Phase3 : Phase {
 
   void ProcessRecord(Connection &conn, RecordHeader &record) override {
     if (record.type != 23) {
-      conn.status() += f("Received TLS record type %d but expected 23 "
-                         "(Application Data Record)",
-                         record.type);
+      ReportError(conn) += f("Received TLS record type %d but expected 23 "
+                             "(Application Data Record)",
+                             record.type);
       return;
     }
     auto data_opt = server_wrapper.Unwrap(record);
     if (!data_opt.has_value()) {
-      conn.status() += "Couldn't decrypt TLS record";
+      ReportError(conn) += "Couldn't decrypt TLS record";
       return;
     }
     auto data = data_opt.value();
@@ -248,13 +249,13 @@ struct Phase3 : Phase {
 
     if (true_type == 21) { // Alert
       if (data.size() != 2) {
-        conn.status() +=
+        ReportError(conn) +=
             f("Received TLS Alert with length %d but expected 2", data.size());
         return;
       }
       U8 level = data[0];
       U8 description = data[1];
-      Str &msg = conn.status();
+      Str &msg = ReportError(conn);
       msg += "Received ";
       msg += AlertLevelToString(level);
       msg += " TLS Alert: ";
@@ -265,20 +266,19 @@ struct Phase3 : Phase {
     } else if (true_type == 23) { // Application Data
       // TODO: there is a bug here because the data might have been split into
       // multiple chunks within a single records
-      conn.received_tls.insert(conn.received_tls.end(), data.begin(),
-                               data.end());
-      conn.NotifyReceivedTLS();
+      conn.inbox.insert(conn.inbox.end(), data.begin(), data.end());
+      conn.NotifyReceived();
     } else {
-      conn.status() += f("Received unknown TLS record type %d", true_type);
+      ReportError(conn) += f("Received unknown TLS record type %d", true_type);
     }
   }
 
-  void SendTLS() override {
-    client_wrapper.Wrap(conn.send_tcp, 0x17, [&]() {
-      conn.send_tcp.insert(conn.send_tcp.end(), conn.send_tls.begin(),
-                           conn.send_tls.end());
+  void PhaseSend() override {
+    client_wrapper.Wrap(conn.tcp_connection.outbox, 0x17, [&]() {
+      conn.tcp_connection.outbox.insert(conn.tcp_connection.outbox.end(),
+                                        conn.outbox.begin(), conn.outbox.end());
     });
-    conn.SendTCP();
+    conn.tcp_connection.Send();
   }
 };
 
@@ -316,19 +316,19 @@ struct Phase2 : Phase {
       return;
     }
     if (type != 23) { // Application Data
-      conn.status() += f("Received TLS record type %d", type);
+      ReportError(conn) += f("Received TLS record type %d", type);
       return;
     }
     auto data_opt = server_wrapper.Unwrap(record);
     if (!data_opt.has_value()) {
-      conn.status() += "Couldn't decrypt TLS record";
+      ReportError(conn) += "Couldn't decrypt TLS record";
       return;
     }
     auto data = data_opt.value();
 
     U8 true_type = data.back();
     if (true_type != 22) { // Handshake
-      conn.status() +=
+      ReportError(conn) +=
           f("Received TLS record type %d but expected 22 (Handshake Record)",
             true_type);
       return;
@@ -340,7 +340,7 @@ struct Phase2 : Phase {
       U8 handshake_type = ConsumeBigEndian<U8>(data);
       U24 handshake_length = ConsumeBigEndian<U24>(data);
       if (handshake_length > data.size()) {
-        conn.status() +=
+        ReportError(conn) +=
             "TLS handshake failed because of record with invalid length";
         return;
       }
@@ -357,16 +357,16 @@ struct Phase2 : Phase {
         // "Server Handshake Finished"
         auto handshake_hash = handshake_hash_builder.Finalize();
 
-        conn.send_tcp.insert(conn.send_tcp.end(),
-                             kClientChangeCipherSpec.begin(),
-                             kClientChangeCipherSpec.end());
+        conn.tcp_connection.outbox.insert(conn.tcp_connection.outbox.end(),
+                                          kClientChangeCipherSpec.begin(),
+                                          kClientChangeCipherSpec.end());
 
-        client_wrapper.Wrap(conn.send_tcp, 0x16, [&]() {
+        client_wrapper.Wrap(conn.tcp_connection.outbox, 0x16, [&]() {
           Arr<U8, 32> finished_key; // Hash-size-bytes
           HKDF_Expand_Label(client_secret, "tls13 finished", ""_MemView,
                             finished_key);
           SHA256 verify_data = HMAC<SHA256>(finished_key, handshake_hash);
-          auto &buf = conn.send_tcp;
+          auto &buf = conn.tcp_connection.outbox;
           buf.push_back(0x14); // handshake
           AppendBigEndian<U24>(buf, 32);
           buf.insert(buf.end(), verify_data.bytes, verify_data.bytes + 32);
@@ -378,12 +378,12 @@ struct Phase2 : Phase {
         if (send_tls_requested) {
           // Encrypt contents of `send_tls` and send it along with `Client
           // Verify`.
-          conn.phase->SendTLS();
+          conn.phase->PhaseSend();
         } else {
-          conn.SendTCP();
+          conn.tcp_connection.Send();
         }
       } else {
-        conn.status() +=
+        ReportError(conn) +=
             f("TLS handshake failed because of unknown message type %d",
               handshake_type);
         return;
@@ -391,7 +391,7 @@ struct Phase2 : Phase {
     }
   }
 
-  void SendTLS() override { send_tls_requested = true; }
+  void PhaseSend() override { send_tls_requested = true; }
 };
 
 // Phase for the plaintext handshake part (before "Server Hello").
@@ -401,18 +401,17 @@ struct Phase1 : Phase {
   bool send_tls_requested = false;
 
   Phase1(Connection &conn, Connection::Config &config) {
-    Status &status = conn.status;
-    client_secret = curve25519::Private::FromDevUrandom(status);
-    if (!status.Ok()) {
-      status() += "Couldn't generate private key for TLS";
-      conn.CloseTCP();
+    client_secret = curve25519::Private::FromDevUrandom(conn);
+    if (!OK(conn)) {
+      ReportError(conn) += "Couldn't generate private key for TLS";
+      conn.tcp_connection.Close();
       return;
     }
     SendClientHello(conn, config);
   }
 
   void SendClientHello(Connection &conn, Connection::Config &config) {
-    auto &send_tcp = conn.send_tcp;
+    auto &send_tcp = conn.tcp_connection.outbox;
     // Generate encryption keys.
     auto client_public = curve25519::Public::FromPrivate(client_secret);
 
@@ -541,7 +540,7 @@ struct Phase1 : Phase {
     sha_builder.Update(
         MemView((U8 *)&send_tcp[record_begin], send_tcp.size() - record_begin));
 
-    conn.SendTCP();
+    conn.tcp_connection.Send();
   }
 
   void ProcessHandshake(Connection &conn, MemView handshake) {
@@ -549,15 +548,16 @@ struct Phase1 : Phase {
     U8 handshake_type = ConsumeBigEndian<U8>(server_hello);
     U24 handshake_length = ConsumeBigEndian<U24>(server_hello);
     if (handshake_length > server_hello.size()) {
-      conn.status() += f("TLS Handshake Header claims length %d but there are "
-                         "only %d bytes left in the record",
-                         handshake_length, server_hello.size());
+      ReportError(conn) +=
+          f("TLS Handshake Header claims length %d but there are "
+            "only %d bytes left in the record",
+            handshake_length, server_hello.size());
       return;
     }
     if (handshake_type != 2) {
-      conn.status() += f("Received TLS handshake type %d but expected 2 "
-                         "(Server Hello)",
-                         handshake_type);
+      ReportError(conn) += f("Received TLS handshake type %d but expected 2 "
+                             "(Server Hello)",
+                             handshake_type);
       return;
     }
 
@@ -570,10 +570,10 @@ struct Phase1 : Phase {
     U8 compression_method = ConsumeBigEndian<U8>(server_hello);
     U16 extensions_length = ConsumeBigEndian<U16>(server_hello);
     if (extensions_length != server_hello.size()) {
-      conn.status() += "Server hello extensions_length is " +
-                       std::to_string((U32)extensions_length) +
-                       " but there are still " +
-                       std::to_string(server_hello.size()) + " bytes left";
+      ReportError(conn) += "Server hello extensions_length is " +
+                           std::to_string((U32)extensions_length) +
+                           " but there are still " +
+                           std::to_string(server_hello.size()) + " bytes left";
       return;
     }
 
@@ -586,9 +586,10 @@ struct Phase1 : Phase {
       U16 extension_type = ConsumeBigEndian<U16>(server_hello);
       U16 extension_length = ConsumeBigEndian<U16>(server_hello);
       if (extension_length > server_hello.size()) {
-        conn.status() += f("Server hello extension_length is %d but there are "
-                           "only %d bytes left",
-                           extension_length, server_hello.size());
+        ReportError(conn) +=
+            f("Server hello extension_length is %d but there are "
+              "only %d bytes left",
+              extension_length, server_hello.size());
         return;
       }
       MemView extension_data = server_hello.first(extension_length);
@@ -602,7 +603,7 @@ struct Phase1 : Phase {
         U16 group = ConsumeBigEndian<U16>(extension_data);
         U16 length = ConsumeBigEndian<U16>(extension_data);
         if (length != extension_data.size()) {
-          conn.status() += f(
+          ReportError(conn) += f(
               "Server Hello key share length is %d but there are %d bytes left",
               length, extension_data.size());
           return;
@@ -610,18 +611,18 @@ struct Phase1 : Phase {
         switch (group) {
         case 0x1d: { // x25519
           if (length != 32) {
-            conn.status() += f("Server Hello key share group is x25519 but "
-                               "length is %d instead of 32",
-                               length);
+            ReportError(conn) += f("Server Hello key share group is x25519 but "
+                                   "length is %d instead of 32",
+                                   length);
             return;
           }
           memcpy(server_public.bytes.data(), extension_data.data(), 32);
           break;
         }
         default: {
-          conn.status() += f("Server Hello key share group is %d but only "
-                             "x25519 is supported",
-                             group);
+          ReportError(conn) += f("Server Hello key share group is %d but only "
+                                 "x25519 is supported",
+                                 group);
           return;
         }
         }
@@ -642,37 +643,34 @@ struct Phase1 : Phase {
     if (record.type == 0x16) { // handshake
       ProcessHandshake(conn, record.Contents());
     } else {
-      conn.status() += f("Received TLS record type %d but expected 22 "
-                         "(TLS Handshake)",
-                         record.type);
+      ReportError(conn) += f("Received TLS record type %d but expected 22 "
+                             "(TLS Handshake)",
+                             record.type);
     }
   }
 
-  void SendTLS() override { send_tls_requested = true; }
+  void PhaseSend() override { send_tls_requested = true; }
 };
 
-void Connection::ConnectTLS(Config config) {
-  ConnectTCP(config);
+void Connection::Connect(Config config) {
+  tcp_connection.Connect(config);
 
   phase.reset(new Phase1(*this, config));
 }
 
-void Connection::SendTLS() {
-  phase->SendTLS();
-  SendTCP();
-}
+void Connection::Send() { phase->PhaseSend(); }
 
-void Connection::CloseTLS() { CloseTCP(); }
+void Connection::Close() { tcp_connection.Close(); }
 
 Size ConsumeRecord(Connection &conn) {
-  MemBuf &received_tcp = conn.received_tcp;
+  MemBuf &received_tcp = conn.tcp_connection.inbox;
   if (received_tcp.size() < 5) {
     return 0; // wait for more data
   }
   RecordHeader &record_header = *(RecordHeader *)received_tcp.data();
-  record_header.Validate(conn.status);
-  if (!conn.status.Ok()) {
-    conn.status() += "TLS stream corrupted";
+  record_header.Validate(conn);
+  if (!OK(conn)) {
+    ReportError(conn) += "TLS stream corrupted";
     return 0;
   }
   Size record_size = sizeof(RecordHeader) + record_header.length.get();
@@ -683,18 +681,23 @@ Size ConsumeRecord(Connection &conn) {
   return record_size;
 }
 
-void Connection::NotifyReceivedTCP() {
+void Connection::TCP_Connection::NotifyReceived() {
+  // Get the pointer to the Connection object from the pointer to the
+  // TCP_Connection
+  tls::Connection &conn =
+      *(tls::Connection *)(((uintptr_t)this) -
+                           offsetof(tls::Connection, tcp_connection));
   while (true) {
-    Size n = ConsumeRecord(*this);
-    if (!status.Ok()) {
-      ERROR << status;
-      CloseTLS();
+    Size n = ConsumeRecord(conn);
+    if (!OK(conn)) {
+      ERROR << ErrorMessage(conn);
+      conn.Close();
       return;
     }
     if (n == 0) {
       return;
     }
-    received_tcp.erase(received_tcp.begin(), received_tcp.begin() + n);
+    inbox.erase(inbox.begin(), inbox.begin() + n);
   }
 }
 

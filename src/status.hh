@@ -29,4 +29,8 @@ struct Status {
   void Reset();
 } __attribute__((packed));
 
+inline bool OK(const Status &s) { return s.Ok(); }
+inline Str ErrorMessage(const Status &s) { return s.ToString(); }
+inline Str &ReportError(Status &s) { return s(); }
+
 } // namespace maf

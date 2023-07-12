@@ -8,25 +8,25 @@ using namespace maf;
 TEST(TCPTest, SimpleExchange) {
 
   struct ServerConnection : tcp::Connection {
-    void NotifyReceivedTCP() override { CloseTCP(); }
+    void NotifyReceived() override { Close(); }
   };
 
   struct ClientConnection : tcp::Connection {
     ClientConnection() {
-      ConnectTCP({.remote_port = 1234});
-      send_tcp.push_back(0x11);
-      SendTCP();
+      Connect({.remote_port = 1234});
+      outbox.push_back(0x11);
+      Send();
     }
 
-    void NotifyReceivedTCP() override { CloseTCP(); }
+    void NotifyReceived() override { Close(); }
   };
 
   struct Server : tcp::Server {
     ServerConnection connection;
     void NotifyAcceptedTCP(FD fd, IP ip, U16 port) override {
       connection.Adopt(std::move(fd));
-      connection.send_tcp.push_back(0x22);
-      connection.SendTCP();
+      connection.outbox.push_back(0x22);
+      connection.Send();
       StopListening();
     }
   };
@@ -49,24 +49,24 @@ TEST(TCPTest, SimpleExchange) {
   EXPECT_TRUE(client_connection.status.Ok())
       << client_connection.status.ToString();
 
-  EXPECT_EQ(server.connection.received_tcp, MemBuf{0x11});
-  EXPECT_EQ(client_connection.received_tcp, MemBuf{0x22});
+  EXPECT_EQ(server.connection.inbox, MemBuf{0x11});
+  EXPECT_EQ(client_connection.inbox, MemBuf{0x22});
 }
 
 TEST(TCPTest, LargePayload) {
   struct ClientConnection : tcp::Connection {
     ClientConnection() {
-      ConnectTCP({.remote_port = 1234});
-      send_tcp.insert(send_tcp.end(), 1024 * 1024, 'c');
+      Connect({.remote_port = 1234});
+      outbox.insert(outbox.end(), 1024 * 1024, 'c');
       closing = true;
-      SendTCP();
+      Send();
     }
 
-    void NotifyReceivedTCP() override {}
+    void NotifyReceived() override {}
   };
 
   struct ServerConnection : tcp::Connection {
-    void NotifyReceivedTCP() override {}
+    void NotifyReceived() override {}
   };
 
   struct Server : tcp::Server {
@@ -89,8 +89,8 @@ TEST(TCPTest, LargePayload) {
   epoll::Loop(status);
   EXPECT_TRUE(status.Ok()) << status.ToString();
 
-  EXPECT_EQ(server.connection.received_tcp.size(), 1024 * 1024);
-  EXPECT_EQ(client_connection.received_tcp, MemBuf{});
+  EXPECT_EQ(server.connection.inbox.size(), 1024 * 1024);
+  EXPECT_EQ(client_connection.inbox, MemBuf{});
 }
 
 TEST(TCPTest, ManyClients) {
@@ -101,16 +101,16 @@ TEST(TCPTest, ManyClients) {
 
   struct ClientConnection : tcp::Connection {
     ClientConnection() {
-      ConnectTCP({.remote_port = 1234});
+      Connect({.remote_port = 1234});
       ++active_clients;
-      send_tcp.insert(send_tcp.end(), {1, 2, 3});
-      SendTCP();
+      outbox.insert(outbox.end(), {1, 2, 3});
+      Send();
     }
 
-    void NotifyReceivedTCP() override {
-      if (received_tcp == MemBuf{4, 5, 6}) {
+    void NotifyReceived() override {
+      if (inbox == MemBuf{4, 5, 6}) {
         ++ping_pongs;
-        CloseTCP();
+        Close();
         --active_clients;
         if (active_clients == 0) {
           all_clients_done();
@@ -121,11 +121,11 @@ TEST(TCPTest, ManyClients) {
 
   struct ServerConnection : tcp::Connection {
     ServerConnection(FD fd) { Adopt(std::move(fd)); }
-    void NotifyReceivedTCP() override {
-      if (received_tcp == MemBuf{1, 2, 3}) {
-        send_tcp.insert(send_tcp.end(), {4, 5, 6});
+    void NotifyReceived() override {
+      if (inbox == MemBuf{1, 2, 3}) {
+        outbox.insert(outbox.end(), {4, 5, 6});
         closing = true;
-        SendTCP();
+        Send();
       }
     }
   };

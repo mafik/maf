@@ -89,27 +89,29 @@ TEST(TLSTest, RFC8448) {
 TEST(TLSTest, Get_www_google_com) {
   struct Connection : tls::Connection {
     size_t total_received = 0;
-    void NotifyReceivedTLS() override {
-      total_received += received_tls.size();
-      received_tls.clear();
+    void NotifyReceived() override {
+      total_received += inbox.size();
+      inbox.clear();
     }
   };
 
   epoll::Init();
   Connection conn;
-  conn.ConnectTLS(tls::Connection::Config{
+  conn.Connect(tls::Connection::Config{
       tcp::Connection::Config{
           .remote_ip = IP(192, 178, 25, 174),
           .remote_port = 443,
       },
       "www.google.com",
   });
-  conn.send_tls +=
-      "GET / HTTP/1.1\r\nHost: www.google.com\r\nConnection: close\r\n\r\n";
-  conn.SendTLS();
+  MemView request =
+      "GET / HTTP/1.1\r\nHost: www.google.com\r\nConnection: close\r\n\r\n"_MemView;
+  conn.outbox.insert(conn.outbox.end(), request.begin(), request.end());
+
+  conn.Send();
   Status status;
   epoll::Loop(status);
   EXPECT_TRUE(status.Ok()) << status.ToString();
-  EXPECT_TRUE(conn.status.Ok()) << conn.status.ToString();
+  EXPECT_TRUE(OK(conn)) << ErrorMessage(conn);
   EXPECT_GT(conn.total_received, 0);
 }

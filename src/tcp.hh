@@ -1,8 +1,8 @@
 #pragma once
 
 #include "epoll.hh"
-#include "mem.hh"
 #include "str.hh"
+#include "stream.hh"
 
 namespace maf::tcp {
 
@@ -33,10 +33,7 @@ struct Server : epoll::Listener {
 // Responsible for interacting with the epoll loop.
 //
 // This is not a "listener" in the TCP sense.
-struct Connection : epoll::Listener {
-  MemBuf received_tcp;
-  MemBuf send_tcp;
-
+struct Connection : epoll::Listener, Stream {
   // Status of this connection.
   Status status;
 
@@ -65,11 +62,10 @@ struct Connection : epoll::Listener {
   ~Connection();
 
   void Adopt(FD);
-  void ConnectTCP(Config);
+  void Connect(Config);
 
-  virtual void NotifyReceivedTCP() = 0;
-  void SendTCP();
-  void CloseTCP();
+  void Send() override;
+  void Close();
 
   /////////////////////////////////////
   // epoll interface - not for users //

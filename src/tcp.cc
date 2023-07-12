@@ -92,7 +92,7 @@ void Connection::Adopt(FD fd) {
   epoll::Add(this, status);
 }
 
-void Connection::ConnectTCP(Config config) {
+void Connection::Connect(Config config) {
   fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
   if (fd < 0) {
     status() += "socket() failed";
@@ -138,28 +138,28 @@ void Connection::ConnectTCP(Config config) {
   }
 }
 
-Connection::~Connection() { CloseTCP(); }
+Connection::~Connection() { Close(); }
 
 static void UpdateEpoll(Connection &c) {
   bool current = c.notify_write;
-  bool desired = !c.send_tcp.empty();
+  bool desired = !c.outbox.empty();
   if (current != desired) {
     c.notify_write = desired;
     epoll::Mod(&c, c.status);
   }
 }
 
-void Connection::SendTCP() {
+void Connection::Send() {
   if (fd < 0) {
     return;
   }
-  if (send_tcp.empty()) {
+  if (outbox.empty()) {
     return;
   }
   if (write_buffer_full) {
     return;
   }
-  ssize_t count = send(fd, send_tcp.data(), send_tcp.size(), MSG_NOSIGNAL);
+  ssize_t count = send(fd, outbox.data(), outbox.size(), MSG_NOSIGNAL);
   if (count == -1) {
     if (errno == EWOULDBLOCK || errno == EAGAIN) {
       // We must wait for the data to be sent before writing more.
@@ -168,15 +168,15 @@ void Connection::SendTCP() {
       return;
     }
     status() += "send()";
-    CloseTCP();
+    Close();
     return;
   }
-  send_tcp.erase(send_tcp.begin(), send_tcp.begin() + count);
-  if (closing && send_tcp.empty()) {
-    CloseTCP();
+  outbox.erase(outbox.begin(), outbox.begin() + count);
+  if (closing && outbox.empty()) {
+    Close();
     return;
   }
-  if (send_tcp.empty()) {
+  if (outbox.empty()) {
   } else {
     // Kernel was unable to accept whole buffer - it's probably full.
     write_buffer_full = true;
@@ -185,7 +185,7 @@ void Connection::SendTCP() {
   UpdateEpoll(*this);
 }
 
-void Connection::CloseTCP() {
+void Connection::Close() {
   epoll::Del(this, status);
   shutdown(fd, SHUT_RDWR);
   fd.Close();
@@ -197,7 +197,7 @@ void Connection::NotifyRead(Status &epoll_status) {
   ssize_t count = read(fd, read_buffer, sizeof(read_buffer));
   if (count == 0) { // EOF
     Status status;
-    CloseTCP();
+    Close();
     return;
   }
   if (count == -1) {
@@ -207,17 +207,17 @@ void Connection::NotifyRead(Status &epoll_status) {
     }
     // Connection is broken. Discard it.
     status() += "read()";
-    CloseTCP();
+    Close();
     return;
   }
 
-  received_tcp.insert(received_tcp.end(), read_buffer, read_buffer + count);
-  NotifyReceivedTCP();
+  inbox.insert(inbox.end(), read_buffer, read_buffer + count);
+  NotifyReceived();
 }
 
 void Connection::NotifyWrite(Status &epoll_status) {
   write_buffer_full = false;
-  SendTCP();
+  Send();
 }
 
 const char *Connection::Name() const { return "tcp::Connection"; }

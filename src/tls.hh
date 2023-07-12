@@ -3,6 +3,7 @@
 #include "arr.hh"
 #include "mem.hh"
 #include "optional.hh"
+#include "stream.hh"
 #include "tcp.hh"
 #include "unique_ptr.hh"
 
@@ -20,17 +21,17 @@ struct Phase {
   // TODO: Remove `Connection &` from all of these and pass it through the
   // constructor instead.
   virtual void ProcessRecord(Connection &, RecordHeader &) = 0;
-  virtual void SendTLS() = 0;
+  virtual void PhaseSend() = 0;
 };
 
 void HKDF_Expand_Label(MemView key, StrView label, MemView ctx, MemView out);
 
-struct Connection : tcp::Connection {
-  // Buffer of plaintext data received from the remote peer.
-  Str received_tls;
+struct Connection : Stream {
+  struct TCP_Connection : tcp::Connection {
+    void NotifyReceived() override;
+  };
 
-  // Buffer of plaintext data to be sent to the remote peer.
-  Str send_tls;
+  TCP_Connection tcp_connection;
 
   UniquePtr<Phase> phase;
 
@@ -38,20 +39,14 @@ struct Connection : tcp::Connection {
     Optional<Str> server_name;
   };
 
-  void ConnectTLS(Config);
-
-  virtual void NotifyReceivedTLS() = 0;
+  void Connect(Config);
 
   // Encrypt & send the contents of `send_tls`.
-  void SendTLS();
+  void Send() override;
 
-  void CloseTLS();
+  void Close();
 
-  ///////////////////////////////////
-  // tcp interface - not for users //
-  ///////////////////////////////////
-
-  void NotifyReceivedTCP() override;
+  operator Status &() { return tcp_connection.status; }
 };
 
 } // namespace maf::tls

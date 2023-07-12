@@ -1,12 +1,12 @@
 #pragma once
 
-#include "str.hh"
+#include "mem.hh"
 
 namespace maf {
 
 struct Stream {
-  Str inbox;
-  Str outbox;
+  MemBuf inbox;
+  MemBuf outbox;
 
   virtual ~Stream() = default;
 
