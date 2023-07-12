@@ -31,6 +31,9 @@ struct Status {
 
 inline bool OK(const Status &s) { return s.Ok(); }
 inline Str ErrorMessage(const Status &s) { return s.ToString(); }
-inline Str &ReportError(Status &s) { return s(); }
+inline Str &ReportError(Status &s, const std::source_location location_arg =
+                                       std::source_location::current()) {
+  return s(location_arg);
+}
 
 } // namespace maf
