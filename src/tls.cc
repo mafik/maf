@@ -260,8 +260,6 @@ struct Phase3 : Phase {
     } else if (true_type == 22) { // Handshake
       return;                     // Ignore because we don't use tickets anyway
     } else if (true_type == 23) { // Application Data
-      // TODO: there is a bug here because the data might have been split into
-      // multiple chunks within a single records
       conn.inbox.insert(conn.inbox.end(), data.begin(), data.end());
       conn.NotifyReceived();
     } else {
