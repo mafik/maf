@@ -107,21 +107,20 @@ struct RecordWrapper {
     memcpy(buf.data() + tag_begin, tag.bytes, 16);
   }
 
-  // TODO: Unwrap should return the wrapped type (U8)
-  Optional<MemView> Unwrap(RecordHeader &record) {
+  bool Unwrap(RecordHeader &record, MemView &data, U8 &true_type) {
     auto contents = record.Contents();
     Poly1305 tag(contents.last<16>());
-    MemView data = contents.subspan(0, contents.size() - 16);
+    data = contents.first(contents.size() - 16);
     XorIV(iv, counter);
     bool decrypted_ok =
         Decrypt_AEAD_CHACHA20_POLY1305(key, iv, data, record, tag);
     XorIV(iv, counter);
     ++counter;
     if (decrypted_ok) {
-      return data;
-    } else {
-      return std::nullopt;
+      true_type = data.back();
+      data = data.first(data.size() - 1);
     }
+    return decrypted_ok;
   }
 };
 
@@ -237,14 +236,12 @@ struct Phase3 : Phase {
                              record.type);
       return;
     }
-    auto data_opt = server_wrapper.Unwrap(record);
-    if (!data_opt.has_value()) {
+    MemView data;
+    U8 true_type;
+    if (!server_wrapper.Unwrap(record, data, true_type)) {
       ReportError(conn) += "Couldn't decrypt TLS record";
       return;
     }
-    auto data = data_opt.value();
-    U8 true_type = data.back();
-    data = data.subspan(0, data.size() - 1);
 
     if (true_type == 21) { // Alert
       if (data.size() != 2) {
@@ -318,21 +315,19 @@ struct Phase2 : Phase {
       ReportError(conn) += f("Received TLS record type %d", type);
       return;
     }
-    auto data_opt = server_wrapper.Unwrap(record);
-    if (!data_opt.has_value()) {
+    MemView data;
+    U8 true_type;
+    if (!server_wrapper.Unwrap(record, data, true_type)) {
       ReportError(conn) += "Couldn't decrypt TLS record";
       return;
     }
-    auto data = data_opt.value();
 
-    U8 true_type = data.back();
     if (true_type != 22) { // Handshake
       ReportError(conn) +=
           f("Received TLS record type %d but expected 22 (Handshake Record)",
             true_type);
       return;
     }
-    data = data.subspan(0, data.size() - 1);
     handshake_hash_builder.Update(data);
 
     while (!data.empty()) {
