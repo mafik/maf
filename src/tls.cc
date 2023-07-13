@@ -251,13 +251,17 @@ struct Phase3 : Phase {
         return;
       }
       U8 level = data[0];
-      U8 description = data[1];
-      Str &msg = AppendErrorMessage(conn);
-      msg += "Received ";
-      msg += AlertLevelToString(level);
-      msg += " TLS Alert: ";
-      msg += AlertDescriptionToString(description);
-      return;
+      if (level == 1) {
+        // Ignore warnings
+      } else {
+        U8 description = data[1];
+        Str &msg = AppendErrorMessage(conn);
+        msg += "Received ";
+        msg += AlertLevelToString(level);
+        msg += " TLS Alert: ";
+        msg += AlertDescriptionToString(description);
+        return;
+      }
     } else if (true_type == 22) { // Handshake
       return;                     // Ignore because we don't use tickets anyway
     } else if (true_type == 23) { // Application Data
@@ -707,16 +711,22 @@ Size ConsumeRecord(Connection &conn) {
   return record_size;
 }
 
+tls::Connection &Upcast(tls::Connection::TCP_Connection &tcp_connection) {
+  return *(tls::Connection *)(((uintptr_t)&tcp_connection) -
+                              offsetof(tls::Connection, tcp_connection));
+}
+
 void Connection::TCP_Connection::NotifyReceived() {
   // Get the pointer to the Connection object from the pointer to the
   // TCP_Connection
-  tls::Connection &conn =
-      *(tls::Connection *)(((uintptr_t)this) -
-                           offsetof(tls::Connection, tcp_connection));
+  tls::Connection &conn = Upcast(*this);
   while (true) {
     Size n = ConsumeRecord(conn);
+    if (IsClosed()) {
+      return;
+    }
     if (!OK(conn)) {
-      ERROR << ErrorMessage(conn);
+      ERROR << f("%p ", &conn) << ErrorMessage(conn);
       conn.Close();
       return;
     }
@@ -725,6 +735,15 @@ void Connection::TCP_Connection::NotifyReceived() {
     }
     inbox.erase(inbox.begin(), inbox.begin() + n);
   }
+}
+
+void Connection::TCP_Connection::NotifyClosed() {
+  tls::Connection &conn = Upcast(*this);
+  conn.NotifyClosed();
+}
+
+const char *Connection::TCP_Connection::Name() const {
+  return "tls::Connection::TCP_Connection";
 }
 
 } // namespace maf::tls

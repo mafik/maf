@@ -16,7 +16,7 @@ union __attribute__((__packed__)) IP {
   IP() : addr(0) {}
   IP(U8 a, U8 b, U8 c, U8 d) : bytes{a, b, c, d} {}
   // Constructor for address in network byte order
-  constexpr IP(U32 a) : addr(a) {}
+  constexpr IP(U32 addr) : addr(addr) {}
   static IP FromInterface(std::string_view interface_name, Status &status);
   static IP NetmaskFromInterface(std::string_view interface_name,
                                  Status &status);

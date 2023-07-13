@@ -39,6 +39,8 @@ void HKDF_Expand_Label(MemView key, StrView label, MemView ctx, MemView out);
 struct Connection : Stream {
   struct TCP_Connection : tcp::Connection {
     void NotifyReceived() override;
+    void NotifyClosed() override;
+    const char *Name() const override;
   };
 
   TCP_Connection tcp_connection;
@@ -54,9 +56,9 @@ struct Connection : Stream {
   // Encrypt & send the contents of `send_tls`.
   void Send() override;
 
-  void Close();
+  void Close() override;
 
-  operator Status &() { return tcp_connection.status; }
+  operator Status &() override { return tcp_connection; }
 };
 
 } // namespace maf::tls

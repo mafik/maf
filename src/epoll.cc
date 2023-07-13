@@ -93,9 +93,9 @@ void Loop(Status &status) {
     }
 
     for (int i = 0; i < events_count; ++i) {
-      Listener *l = (Listener *)events[i].data.ptr;
       if (events[i].data.ptr == nullptr)
         continue;
+      Listener *l = (Listener *)events[i].data.ptr;
 #ifdef DEBUG_EPOLL
       if (strcmp(l->Name(), "Timer")) {
         bool in = events[i].events & EPOLLIN;
@@ -107,6 +107,9 @@ void Loop(Status &status) {
       if (events[i].events & EPOLLIN) {
         l->NotifyRead(status);
         if (!status.Ok()) {
+#ifdef DEBUG_EPOLL
+          ERROR << l->Name() << ": " << ErrorMessage(status);
+#endif
           return;
         }
       }
@@ -115,6 +118,9 @@ void Loop(Status &status) {
       if (events[i].events & EPOLLOUT) {
         l->NotifyWrite(status);
         if (!status.Ok()) {
+#ifdef DEBUG_EPOLL
+          ERROR << l->Name() << ": " << ErrorMessage(status);
+#endif
           return;
         }
       }

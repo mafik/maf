@@ -9,32 +9,51 @@
 
 namespace maf::http {
 
-// Requirements
-// - easy api for simple requests "get the contents from that URL"
-// - user can cancel request at any time (by destroying the request object)
-
-struct GetBase {
+// Base class for HTTP requests.
+//
+// Accumulates the HTTP response in the `inbox` buffer.
+struct RequestBase {
   Str url;
-  Status status;
   UniquePtr<Stream> stream;
 
-  GetBase(Str url) : url(url) {}
-  virtual ~GetBase();
+  enum class ParsingState {
+    Status,
+    Headers,
+    Data,
+  } parsing_state = ParsingState::Status;
+  size_t inbox_pos = 0;
 
-  virtual bool OnRedirect(StrView url) { return true; }
-  virtual void OnHeader(StrView name, StrView value) = 0;
-  virtual void OnData(StrView data) = 0;
+  RequestBase(Str url);
+  virtual ~RequestBase();
+
+  // RequestBase accumulates the HTTP response in the `inbox` buffer. This
+  // may become problematic for large responses. This method will clear the
+  // `inbox` buffer (invalidating any `StrView` pointing at it).
+  void ClearInbox();
+
+  virtual void OnStatus(StrView status_code, StrView reason_phrase) {}
+  virtual void OnHeader(StrView name, StrView value) {}
+  virtual void OnData(StrView data) {}
+  virtual void OnClosed() {}
+
+  Status status; // this is only used when there is no `stream`
+  operator Status &() { return status; }
 };
 
-struct Get : GetBase {
+struct Get : RequestBase {
   using Callback = std::function<void()>;
   StrView response;
+  size_t data_begin = 0;
   Callback callback;
 
-  Get(Str url, Callback callback) : GetBase(url), callback(callback) {}
+  UniquePtr<Stream> old_stream;
 
+  Get(Str url, Callback callback);
+
+  void OnStatus(StrView status_code, StrView reason_phrase) override;
   void OnHeader(StrView name, StrView value) override;
   void OnData(StrView data) override;
+  void OnClosed() override;
 };
 
 } // namespace maf::http

@@ -186,17 +186,22 @@ void Connection::Send() {
 }
 
 void Connection::Close() {
+  if (IsClosed()) {
+    return;
+  }
   epoll::Del(this, status);
   shutdown(fd, SHUT_RDWR);
   fd.Close();
+  NotifyClosed();
 }
+
+bool Connection::IsClosed() const { return fd == -1; }
 
 thread_local static U8 read_buffer[1024 * 1024];
 
 void Connection::NotifyRead(Status &epoll_status) {
   ssize_t count = read(fd, read_buffer, sizeof(read_buffer));
   if (count == 0) { // EOF
-    Status status;
     Close();
     return;
   }

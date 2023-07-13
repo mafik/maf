@@ -65,7 +65,9 @@ struct Connection : epoll::Listener, Stream {
   void Connect(Config);
 
   void Send() override;
-  void Close();
+  void Close() override;
+
+  bool IsClosed() const;
 
   /////////////////////////////////////
   // epoll interface - not for users //
@@ -75,6 +77,8 @@ struct Connection : epoll::Listener, Stream {
   void NotifyWrite(Status &) override;
 
   const char *Name() const override;
+
+  operator Status &() override { return status; }
 };
 
 } // namespace maf::tcp
