@@ -15,12 +15,14 @@ namespace maf::tls {
 struct Connection;
 struct RecordHeader;
 
+// Responsible for data & logic specific to a single phase of TLS.
 struct Phase {
+  Connection &conn;
+
+  Phase(Connection &conn);
   virtual ~Phase() = default;
 
-  // TODO: Remove `Connection &` from all of these and pass it through the
-  // constructor instead.
-  virtual void ProcessRecord(Connection &, RecordHeader &) = 0;
+  virtual void ProcessRecord(RecordHeader &) = 0;
   virtual void PhaseSend() = 0;
 };
 

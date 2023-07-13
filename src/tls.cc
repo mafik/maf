@@ -211,15 +211,16 @@ StrView AlertDescriptionToString(U8 desc) {
   }
 }
 
+Phase::Phase(Connection &conn) : conn(conn) {}
+
 // Phase for the encrypted application part (after "Client/Server Handshake
 // Finished").
 struct Phase3 : Phase {
-  Connection &conn;
   RecordWrapper server_wrapper;
   RecordWrapper client_wrapper;
 
   Phase3(Connection &conn, SHA256 handshake_secret, SHA256 handshake_hash)
-      : conn(conn) {
+      : Phase(conn) {
     Arr<U8, 32> derived, client_secret, server_secret; // Hash-size-bytes
     HKDF_Expand_Label(handshake_secret, "tls13 derived", empty_hash, derived);
     auto master_secret = HKDF_Extract<SHA256>(derived, zero_key);
@@ -231,7 +232,7 @@ struct Phase3 : Phase {
     client_wrapper = RecordWrapper(client_secret);
   }
 
-  void ProcessRecord(Connection &conn, RecordHeader &record) override {
+  void ProcessRecord(RecordHeader &record) override {
     if (record.type != 23) {
       ReportError(conn) += f("Received TLS record type %d but expected 23 "
                              "(Application Data Record)",
@@ -292,9 +293,9 @@ struct Phase2 : Phase {
   RecordWrapper client_wrapper;
   bool send_tls_requested;
 
-  Phase2(SHA256::Builder sha_builder, curve25519::Shared shared_secret,
-         bool send_tls_requested)
-      : handshake_hash_builder(std::move(sha_builder)),
+  Phase2(Connection &conn, SHA256::Builder sha_builder,
+         curve25519::Shared shared_secret, bool send_tls_requested)
+      : Phase(conn), handshake_hash_builder(std::move(sha_builder)),
         send_tls_requested(send_tls_requested) {
     auto hello_hash_builder = handshake_hash_builder;
     auto hello_hash = hello_hash_builder.Finalize();
@@ -310,7 +311,7 @@ struct Phase2 : Phase {
     client_wrapper = RecordWrapper(client_secret);
   }
 
-  void ProcessRecord(Connection &conn, RecordHeader &record) override {
+  void ProcessRecord(RecordHeader &record) override {
     auto type = record.type;
     if (type == 20) { // Change Cipher Spec - ignore
       return;
@@ -400,17 +401,17 @@ struct Phase1 : Phase {
   curve25519::Private client_secret;
   bool send_tls_requested = false;
 
-  Phase1(Connection &conn, Connection::Config &config) {
+  Phase1(Connection &conn, Connection::Config &config) : Phase(conn) {
     client_secret = curve25519::Private::FromDevUrandom(conn);
     if (!OK(conn)) {
       ReportError(conn) += "Couldn't generate private key for TLS";
       conn.tcp_connection.Close();
       return;
     }
-    SendClientHello(conn, config);
+    SendClientHello(config);
   }
 
-  void SendClientHello(Connection &conn, Connection::Config &config) {
+  void SendClientHello(Connection::Config &config) {
     auto &send_tcp = conn.tcp_connection.outbox;
     // Generate encryption keys.
     auto client_public = curve25519::Public::FromPrivate(client_secret);
@@ -635,11 +636,11 @@ struct Phase1 : Phase {
     curve25519::Shared shared_secret =
         curve25519::Shared::FromPrivateAndPublic(client_secret, server_public);
 
-    conn.phase.reset(
-        new Phase2(std::move(sha_builder), shared_secret, send_tls_requested));
+    conn.phase.reset(new Phase2(conn, std::move(sha_builder), shared_secret,
+                                send_tls_requested));
   }
 
-  void ProcessRecord(Connection &conn, RecordHeader &record) override {
+  void ProcessRecord(RecordHeader &record) override {
     if (record.type == 0x16) { // handshake
       ProcessHandshake(conn, record.Contents());
     } else {
@@ -677,7 +678,7 @@ Size ConsumeRecord(Connection &conn) {
   if (received_tcp.size() < record_size) {
     return 0; // wait for more data
   }
-  conn.phase->ProcessRecord(conn, record_header);
+  conn.phase->ProcessRecord(record_header);
   return record_size;
 }
 
