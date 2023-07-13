@@ -21,8 +21,6 @@ namespace maf::tls {
 
 // Nice introduction to TLS 1.3: https://tls13.xargs.org/
 
-// TODO: Remove unsupported ciphers
-
 struct RecordHeader {
   U8 type;
   U8 version_major;
@@ -375,13 +373,14 @@ struct Phase2 : Phase {
 
         bool send_tls_requested =
             this->send_tls_requested; // copy to avoid use-after-free
-        conn.phase.reset(new Phase3(conn, handshake_secret, handshake_hash));
+        Connection &conn2 = conn;
+        conn2.phase.reset(new Phase3(conn2, handshake_secret, handshake_hash));
         if (send_tls_requested) {
           // Encrypt contents of `send_tls` and send it along with `Client
           // Verify`.
-          conn.phase->PhaseSend();
+          conn2.phase->PhaseSend();
         } else {
-          conn.tcp_connection.Send();
+          conn2.tcp_connection.Send();
         }
       } else {
         ReportError(conn) +=
@@ -412,6 +411,7 @@ struct Phase1 : Phase {
   }
 
   void SendClientHello(Connection::Config &config) {
+    constexpr bool kCompatibleWithTLS12 = false;
     auto &send_tcp = conn.tcp_connection.outbox;
     // Generate encryption keys.
     auto client_public = curve25519::Public::FromPrivate(client_secret);
@@ -420,8 +420,12 @@ struct Phase1 : Phase {
     auto Append = [&](const std::initializer_list<U8> bytes) {
       send_tcp.insert(send_tcp.end(), bytes);
     };
-    Append({0x16});       // handshake
-    Append({0x03, 0x01}); // protocol verison: TLS 1.0 (for compatibility)
+    Append({0x16}); // handshake
+    if constexpr (kCompatibleWithTLS12) {
+      Append({0x03, 0x01}); // protocol verison: TLS 1.0 (for compatibility)
+    } else {
+      Append({0x03, 0x04}); // protocol verison: TLS 1.3
+    }
     Size record_length_offset = send_tcp.size();
     Append({0x00, 0x00}); // placeholder for record length
     Size record_begin = send_tcp.size();
@@ -429,24 +433,38 @@ struct Phase1 : Phase {
     Size handshake_length_offset = send_tcp.size();
     Append({0x00, 0x00, 0x00}); // placeholder for handshake length
     Size handshake_begin = send_tcp.size();
-    Append({0x03, 0x03}); // client version: TLS 1.2 (for compatibility)
+    if constexpr (kCompatibleWithTLS12) {
+      Append({0x03, 0x03}); // client version: TLS 1.2 (for compatibility)
+    } else {
+      Append({0x03, 0x04}); // client version: TLS 1.3
+    }
 
     for (int i = 0; i < 32; ++i) {
       send_tcp.push_back(rand() % 0x100); // client random
     }
 
-    Append({0x20}); // session id length: 32
-    for (int i = 0; i < 32; ++i) {
-      send_tcp.push_back(rand() % 0x100); // fake session id
+    if constexpr (kCompatibleWithTLS12) {
+      Append({0x20}); // session id length: 32
+      for (int i = 0; i < 32; ++i) {
+        send_tcp.push_back(rand() % 0x100); // fake session id
+      }
+    } else {
+      Append({0});
     }
 
-    Append({0x00, 0x08}); // cipher suites length: 8 (four cipher suites)
-    Append({0x13, 0x03}); // TLS_CHACHA20_POLY1305_SHA256
-    Append({0x13, 0x01}); // TLS_AES_128_GCM_SHA256
-    Append({0x13, 0x02}); // TLS_AES_256_GCM_SHA384
-    Append({0x00, 0xff}); // TLS_EMPTY_RENEGOTIATION_INFO_SCSV
-    Append({0x01});       // compression methods length: 1
-    Append({0x00});       // compression method: null
+    if constexpr (kCompatibleWithTLS12) {
+      Append({0x00, 0x08}); // cipher suites length: 2 (one cipher suite)
+      Append({0x13, 0x03}); // TLS_CHACHA20_POLY1305_SHA256
+      Append({0x13, 0x01}); // TLS_AES_128_GCM_SHA256
+      Append({0x13, 0x02}); // TLS_AES_256_GCM_SHA384
+      Append({0x00, 0xff}); // TLS_EMPTY_RENEGOTIATION_INFO_SCSV
+    } else {
+      Append({0x00, 0x02}); // cipher suites length: 2 (one cipher suite)
+      Append({0x13, 0x03}); // TLS_CHACHA20_POLY1305_SHA256
+    }
+
+    Append({0x01}); // compression methods length: 1
+    Append({0x00}); // compression method: null
 
     Size extensions_length_offset = send_tcp.size();
     Append({0x00, 0x00}); // placeholder for extensions length
@@ -465,26 +483,34 @@ struct Phase1 : Phase {
                       config.server_name->end());
     }
 
-    Append({0x00, 0x0b}); // extension type: EC point formats
-    Append({0x00, 0x04}); // extension length: 4
-    Append({0x03});       // format length: 3
-    Append({0x00});       // format: uncompressed
-    Append({0x01});       // format: ansiX962_compressed_prime
-    Append({0x02});       // format: ansiX962_compressed_char2
+    if constexpr (kCompatibleWithTLS12) {
+      Append({0x00, 0x0b}); // extension type: EC point formats
+      Append({0x00, 0x04}); // extension length: 4
+      Append({0x03});       // format length: 3
+      Append({0x00});       // format: uncompressed
+      Append({0x01});       // format: ansiX962_compressed_prime
+      Append({0x02});       // format: ansiX962_compressed_char2
+    }
 
     Append({0x00, 0x0a}); // extension type: supported groups
-    Append({0x00, 0x16}); // extension length: 22
-    Append({0x00, 0x14}); // supported groups length: 20
-    Append({0x00, 0x1d}); // x25519
-    Append({0x00, 0x17}); // secp256r1
-    Append({0x00, 0x1e}); // x448
-    Append({0x00, 0x19}); // secp521r1
-    Append({0x00, 0x18}); // secp384r1
-    Append({0x01, 0x00}); // ffdhe2048
-    Append({0x01, 0x01}); // ffdhe3072
-    Append({0x01, 0x02}); // ffdhe4096
-    Append({0x01, 0x03}); // ffdhe6144
-    Append({0x01, 0x04}); // ffdhe8192
+    if constexpr (kCompatibleWithTLS12) {
+      Append({0x00, 0x16}); // extension length: 22
+      Append({0x00, 0x14}); // supported groups length: 20
+      Append({0x00, 0x1d}); // x25519
+      Append({0x00, 0x17}); // secp256r1
+      Append({0x00, 0x1e}); // x448
+      Append({0x00, 0x19}); // secp521r1
+      Append({0x00, 0x18}); // secp384r1
+      Append({0x01, 0x00}); // ffdhe2048
+      Append({0x01, 0x01}); // ffdhe3072
+      Append({0x01, 0x02}); // ffdhe4096
+      Append({0x01, 0x03}); // ffdhe6144
+      Append({0x01, 0x04}); // ffdhe8192
+    } else {
+      Append({0x00, 0x04}); // extension length: 4
+      Append({0x00, 0x02}); // supported groups length: 2
+      Append({0x00, 0x1d}); // x25519
+    }
 
     Append({0x00, 0x23}); // extension type: session ticket
     Append({0x00, 0x00}); // extension length: 0

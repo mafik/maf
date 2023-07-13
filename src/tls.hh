@@ -7,9 +7,17 @@
 #include "tcp.hh"
 #include "unique_ptr.hh"
 
-// TODO: RFC Compliance https://datatracker.ietf.org/doc/html/rfc8446#section-9
-
-// Bare-minimum TLS 1.3 implementation. Vulnerable to MITM.
+// Bare-minimum TLS 1.3 implementation.
+//
+// Doesn't check peer certificates (can be MITM-ed).
+//
+// Not compliant with RFC 8446 due to lack of several features:
+// - TLS_AES_128_GCM_SHA256 cipher
+// - rsa_pkcs1_sha256 signatures
+// - rsa_pss_rsae_sha256 signatures
+// - ecdsa_secp256r1_sha256 signatures
+// - secp256r1 key exchange
+// - TLS Cookies
 namespace maf::tls {
 
 struct Connection;

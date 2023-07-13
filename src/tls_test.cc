@@ -3,6 +3,7 @@
 #include "hex.hh"
 #include "hkdf.hh"
 #include "ip.hh"
+#include "log.hh"
 #include "sha.hh"
 #include "tls.hh"
 
