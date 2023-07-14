@@ -19,7 +19,7 @@ from subprocess import run
 CC = os.environ['CC'] = os.environ['CC'] if 'CC' in os.environ else 'clang'
 CXX = os.environ['CXX'] = os.environ['CXX'] if 'CXX' in os.environ else 'clang++'
 CXXFLAGS = '-std=c++2b -fcolor-diagnostics -flto'.split()
-CXXFLAGS += ['-I', str(fs_utils.project_tmp_dir)]
+CXXFLAGS += ['-I', str(fs_utils.build_dir)]
 CXXFLAGS_DEBUG = []
 LDFLAGS = ['-fuse-ld=lld']
 
@@ -270,7 +270,7 @@ def AddSteps(recipe):
     if args.verbose:
         print_debug()
 
-    OBJ_DIR = fs_utils.project_tmp_dir / 'obj'
+    OBJ_DIR = fs_utils.build_dir / 'obj'
     OBJ_DIR.mkdir(parents=True, exist_ok=True)
 
     def redirect_path(path):
@@ -282,7 +282,7 @@ def AddSteps(recipe):
         elif types[path] in ('test', 'main'):
             return name
         elif path.startswith('generated'):
-            return str(fs_utils.project_tmp_dir / path)
+            return str(fs_utils.build_dir / path)
         else:
             return path
 

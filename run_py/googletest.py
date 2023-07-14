@@ -5,7 +5,7 @@ from cmake import CMakeArgs
 from make import Popen
 
 GOOGLETEST_SRC = fs_utils.project_root / 'vendor' / 'googletest-1.13.0'
-GOOGLETEST_OUT = fs_utils.project_tmp_dir / 'googletest'
+GOOGLETEST_OUT = fs_utils.build_dir / 'googletest'
 
 GMOCK_LIB = GOOGLETEST_OUT / 'lib' / 'gmock.lib'
 GTEST_LIB = GOOGLETEST_OUT / 'lib' / 'gtest.lib'

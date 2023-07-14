@@ -13,7 +13,7 @@ import tempfile
 import hashlib
 import fs_utils
 
-HASH_DIR = fs_utils.project_tmp_dir / 'hashes'
+HASH_DIR = fs_utils.build_dir / 'hashes'
 HASH_DIR.mkdir(parents=True, exist_ok=True)
 
 
