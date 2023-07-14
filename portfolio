@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+
+import argparse
+from pathlib import Path
+from collections.abc import Callable
+import sys
+
+
+class Fix:
+    def __init__(self, desc: str, fun: Callable[[], None]):
+        self.desc = desc
+        self.fun = fun
+
+
+class Issue:
+    def __init__(self, desc: str, fixes: list[Fix]):
+        self.desc = desc
+        self.fixes = fixes
+
+
+maf_dir = Path('~/C++').expanduser()
+
+
+class Project:
+    def __init__(self, name: str, path: str):
+        self.name = name
+        self.path = Path(path).expanduser()
+
+    def check(self) -> list[Issue]:
+        issues = []
+        if not self.path.exists():
+            issues.append(Issue(f'Path {self.path} does not exist', []))
+            return issues
+
+        if not self.path.is_dir():
+            issues.append(Issue(f'Path {self.path} is not a directory', []))
+            return issues
+
+        run_path = self.path / 'run'
+        if not run_path.exists():
+            issues.append(Issue(f'Path {run_path} does not exist', [Fix(
+                f'Hardlink {run_path} to {maf_dir}/run', lambda run_path=run_path: run_path.hardlink_to(maf_dir / 'run'))]))
+
+        run_py_path = self.path / 'run_py'
+        if not run_py_path.exists():
+            issues.append(Issue(f'Path {run_py_path} does not exist', [Fix(
+                f'Symlink {run_py_path} to {maf_dir}/run_py', lambda run_py_path=run_py_path: run_py_path.symlink_to(maf_dir / 'run_py'))]))
+
+        src_inodes = dict()
+        for src_file in (self.path / 'src').glob('*'):
+            maf_file = maf_dir / 'src' / src_file.name
+            src_inode = src_file.stat().st_ino
+            src_inodes[src_inode] = src_file
+            # Every file that overlaps with maf should be a hardlink
+            if maf_file.exists():
+                maf_inode = maf_file.stat().st_ino
+                if maf_inode != src_inode:
+                    def fix_fun(src_file=src_file, maf_file=maf_file):
+                        src_file.unlink()
+                        src_file.hardlink_to(maf_file)
+                    issues.append(Issue(f'File {src_file} is not a hardlink to {maf_file}', [
+                        Fix(f'Hardlink {src_file} to {maf_file}', fix_fun)]))
+
+        # Every file that is a hardlink to maf should have the same name
+        for maf_file in (maf_dir / 'src').glob('*'):
+            maf_inode = maf_file.stat().st_ino
+            if maf_inode in src_inodes:
+                src_file = src_inodes[maf_inode]
+                if src_file.name != maf_file.name:
+                    issues.append(
+                        Issue(f'File {src_file.name} should be named {maf_file.name}', []))
+
+        return issues
+
+
+projects = [
+    Project('maf', '~/C++'),
+    Project('gatekeeper', '~/Pulpit/gatekeeper'),
+]
+
+
+def es(n: int) -> str:
+    return '' if n == 1 else 'es'
+
+
+def check():
+    parser = argparse.ArgumentParser(prog='portfolio check')
+    parser.add_argument('project', choices=[
+                        p.name for p in projects], nargs='?')
+    args = parser.parse_args(sys.argv[2:])
+
+    found: bool = False
+    for p in projects:
+        if args.project and p.name != args.project:
+            continue
+        found = True
+        issues = p.check()
+        if issues:
+            print(f'Found {len(issues)} issues in project {p.name}:')
+            for i in issues:
+                n = len(i.fixes)
+                print(f'  {i.desc} ({n} fix{es(n)} available)')
+            for i in issues:
+                if i.fixes:
+                    print(f'Recommended fixes for "{i.desc}":')
+                    for ind, f in enumerate(i.fixes):
+                        print(f'  {ind}. {f.desc}')
+                    print(
+                        'Enter a number to apply a fix, or anything else to skip.')
+                    try:
+                        choice = int(input('> '))
+                        if choice < len(i.fixes):
+                            print(f'Applying fix {choice}...')
+                            i.fixes[choice].fun()
+                    except ValueError:
+                        print('Skipping')
+    if not found:
+        print('Project not found')
+
+
+def include():
+    project_choices = [p.name for p in projects[1:]]
+    module_choices = set(f.stem for f in (
+        maf_dir / 'src').glob('*') if not f.stem.endswith('_test'))
+    parser = argparse.ArgumentParser(prog='portfolio include')
+    parser.add_argument('project', choices=project_choices)
+    parser.add_argument('module', choices=sorted(module_choices))
+    args = parser.parse_args(sys.argv[2:])
+    project = next(p for p in projects if p.name == args.project)
+    for name in [f'{args.module}.hh', f'{args.module}.cc']:
+        maf_file = maf_dir / 'src' / name
+        if not maf_file.exists():
+            continue
+        project_file = project.path / 'src' / name
+        if project_file.exists():
+            raise Exception(f'File {project_file} already exists')
+        print(f'Hardlinking {project_file} to {maf_file}')
+        project_file.hardlink_to(maf_file)
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Manage projects based on namespace maf',
+                                     usage='''portfolio <command> [<args>]
+
+Available commands:
+   check      Check for (& fix) issues in projects
+   include    Include a pair of .hh/.cc files in a project
+''')
+    parser.add_argument('action', choices=['check', 'include'])
+    args = parser.parse_args(sys.argv[1:2])
+
+    if args.action not in globals():
+        print('Unrecognized command')
+        parser.print_help()
+        exit(1)
+
+    globals()[args.action]()
+
+
+if __name__ == '__main__':
+    main()
