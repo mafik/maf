@@ -18,8 +18,9 @@ from subprocess import run
 
 CC = os.environ['CC'] = os.environ['CC'] if 'CC' in os.environ else 'clang'
 CXX = os.environ['CXX'] = os.environ['CXX'] if 'CXX' in os.environ else 'clang++'
-CXXFLAGS = '-std=c++2b -fcolor-diagnostics -flto'.split()
-CXXFLAGS += ['-I', str(fs_utils.build_dir)]
+CXXFLAGS = ['-std=c++2b', '-fcolor-diagnostics',
+            '-I', str(fs_utils.build_dir), '-static',
+            '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections']
 LDFLAGS = ['-fuse-ld=lld']
 
 TEST_DEPS = []
@@ -58,7 +59,7 @@ defines.add('SK_VULKAN')
 defines.add('SK_USE_VMA')
 defines.add('SK_SHAPER_HARFBUZZ_AVAILABLE')
 
-CXXFLAGS_RELEASE = ['-O3', '-DNDEBUG']
+CXXFLAGS_RELEASE = ['-O3', '-DNDEBUG', '-flto']
 CXXFLAGS_DEBUG = ['-O0', '-g']
 
 CXXFLAGS_DEBUG += ['-D_DEBUG']
