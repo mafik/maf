@@ -2,6 +2,7 @@
 
 #include "int.hh"
 #include "span.hh"
+#include "str.hh"
 #include "vec.hh"
 
 namespace maf {
@@ -9,6 +10,14 @@ namespace maf {
 using MemView = Span<U8>;
 
 using MemBuf = Vec<U8>;
+
+inline MemView MemViewOf(const Str &s) {
+  return MemView((U8 *)s.data(), s.size());
+}
+
+inline MemView MemViewOf(StrView s) {
+  return MemView((U8 *)s.data(), s.size());
+}
 
 inline MemView operator""_MemView(const char *str, size_t len) {
   return MemView((U8 *)str, len);

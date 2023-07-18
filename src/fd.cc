@@ -1,4 +1,5 @@
 #include "fd.hh"
+#include "status.hh"
 
 #include <cstdint>
 #include <cstring>
@@ -19,22 +20,20 @@ FD &FD::operator=(FD &&other) {
   return *this;
 }
 
-void FD::SetNonBlocking(Str &error) {
+void FD::SetNonBlocking(Status &status) {
   int flags = fcntl(fd, F_GETFL);
   if (flags < 0) {
-    error = "fcntl(F_GETFL) failed: ";
-    error += strerror(errno);
+    AppendErrorMessage(status) += "fcntl(F_GETFL) failed";
     return;
   }
 
   if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
-    error = "fcntl(F_SETFL) failed: ";
-    error += strerror(errno);
+    AppendErrorMessage(status) += "fcntl(F_SETFL) failed";
     return;
   }
 }
 
-void FD::Bind(IP local_ip, U16 local_port, Str &error) {
+void FD::Bind(IP local_ip, U16 local_port, Status &status) {
   sockaddr_in addr = {
       .sin_family = AF_INET,
       .sin_port = htons(local_port),
@@ -42,8 +41,7 @@ void FD::Bind(IP local_ip, U16 local_port, Str &error) {
   };
 
   if (bind(fd, (struct sockaddr *)&addr, sizeof addr) < 0) {
-    error = "bind: ";
-    error += strerror(errno);
+    AppendErrorMessage(status) += "bind";
     return;
   }
 }

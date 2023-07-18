@@ -9,6 +9,13 @@ namespace maf {
 void HexToBytesUnchecked(StrView hex, U8 *out_bytes);
 
 Str BytesToHex(Span<const U8> bytes);
+inline Str BytesToHex(const U8 *bytes, size_t len) {
+  return BytesToHex({bytes, len});
+}
+
+template <typename T> inline Str ValToHex(T &val) {
+  return BytesToHex(reinterpret_cast<const U8 *>(&val), sizeof(T));
+}
 
 inline MemBuf operator""_HexMemBuf(const char *str, size_t len) {
   MemBuf buf;

@@ -12,6 +12,7 @@ struct SHA1 {
   SHA1(MemView);
 
   operator MemView() { return bytes; }
+  operator StrView() { return StrView((const char *)bytes, 20); }
 };
 
 struct SHA256 {

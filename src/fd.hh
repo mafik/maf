@@ -22,10 +22,10 @@ struct FD {
 
   void Close();
 
-  void SetNonBlocking(Str &error);
+  void SetNonBlocking(maf::Status &);
 
-  // TODO: move those into another theader (fd_net.hh ?)
-  void Bind(IP local_ip, U16 local_port, Str &error);
+  // TODO: move those into another header (fd_net.hh ?)
+  void Bind(IP local_ip, U16 local_port, maf::Status &);
   void SendTo(IP remote_ip, U16 remote_port, StrView buffer, Str &error);
 };
 
