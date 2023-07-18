@@ -21,6 +21,33 @@ class Issue:
 maf_dir = Path('~/C++').expanduser()
 
 
+def tree_differs(a: Path, b: Path) -> bool:
+    if a.exists() != b.exists():
+        return True
+    elif a.is_dir() != b.is_dir():
+        return True
+    elif a.is_dir():
+        return any(tree_differs(f, b / f.name) for f in a.iterdir())
+    else:
+        return a.stat().st_ino != b.stat().st_ino
+
+
+def check_hardlink(master: Path, slave: Path, issues: list[Issue]):
+    def fix(master=master, slave=slave):
+        if slave.exists():
+            slave.unlink()
+        if master.is_dir():
+            slave.mkdir()
+            for f in master.iterdir():
+                fix(f, slave / f.name)
+        else:
+            slave.hardlink_to(master)
+    if tree_differs(master, slave):
+        fix_name = 'tree of hardlinks' if master.is_dir() else 'hardlink'
+        issues.append(Issue(f'Path {slave} differs from {master}', [
+            Fix(f'Create a {fix_name} at {slave} pointing to {master}', fix)]))
+
+
 class Project:
     def __init__(self, name: str, path: str):
         self.name = name
@@ -36,15 +63,8 @@ class Project:
             issues.append(Issue(f'Path {self.path} is not a directory', []))
             return issues
 
-        run_path = self.path / 'run'
-        if not run_path.exists():
-            issues.append(Issue(f'Path {run_path} does not exist', [Fix(
-                f'Hardlink {run_path} to {maf_dir}/run', lambda run_path=run_path: run_path.hardlink_to(maf_dir / 'run'))]))
-
-        run_py_path = self.path / 'run_py'
-        if not run_py_path.exists():
-            issues.append(Issue(f'Path {run_py_path} does not exist', [Fix(
-                f'Symlink {run_py_path} to {maf_dir}/run_py', lambda run_py_path=run_py_path: run_py_path.symlink_to(maf_dir / 'run_py'))]))
+        check_hardlink(maf_dir / 'run', self.path / 'run', issues)
+        check_hardlink(maf_dir / 'run_py', self.path / 'run_py', issues)
 
         src_inodes = dict()
         for src_file in (self.path / 'src').glob('*'):
@@ -53,13 +73,7 @@ class Project:
             src_inodes[src_inode] = src_file
             # Every file that overlaps with maf should be a hardlink
             if maf_file.exists():
-                maf_inode = maf_file.stat().st_ino
-                if maf_inode != src_inode:
-                    def fix_fun(src_file=src_file, maf_file=maf_file):
-                        src_file.unlink()
-                        src_file.hardlink_to(maf_file)
-                    issues.append(Issue(f'File {src_file} is not a hardlink to {maf_file}', [
-                        Fix(f'Hardlink {src_file} to {maf_file}', fix_fun)]))
+                check_hardlink(maf_file, src_file, issues)
 
         # Every file that is a hardlink to maf should have the same name
         for maf_file in (maf_dir / 'src').glob('*'):
@@ -114,6 +128,9 @@ def check():
                             i.fixes[choice].fun()
                     except ValueError:
                         print('Skipping')
+                    except (KeyboardInterrupt, EOFError):
+                        print('Aborting')
+                        exit(1)
     if not found:
         print('Project not found')
 
