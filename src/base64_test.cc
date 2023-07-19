@@ -1,6 +1,6 @@
 #include "base64.hh"
 
-#include <gtest/gtest.h>
+#include "gtest.hh"
 
 using namespace maf;
 

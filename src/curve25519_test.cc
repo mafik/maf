@@ -1,6 +1,6 @@
 #include "curve25519.hh"
 
-#include <gtest/gtest.h>
+#include "gtest.hh"
 
 using namespace maf;
 using namespace maf::curve25519;

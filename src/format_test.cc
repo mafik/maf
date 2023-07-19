@@ -1,6 +1,6 @@
 #include "format.hh"
 
-#include <gtest/gtest.h>
+#include "gtest.hh"
 
 using namespace maf;
 

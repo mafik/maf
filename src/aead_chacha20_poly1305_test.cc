@@ -1,7 +1,6 @@
 #include "aead_chacha20_poly1305.hh"
 
-#include <gtest/gtest.h>
-
+#include "gtest.hh"
 #include "hex.hh"
 
 using namespace maf;

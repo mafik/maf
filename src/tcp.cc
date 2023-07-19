@@ -34,10 +34,8 @@ void Server::Listen(Config config) {
     return;
   }
 
-  Str err;
-  fd.Bind(config.local_ip, config.local_port, err);
-  if (!err.empty()) {
-    status() += err;
+  fd.Bind(config.local_ip, config.local_port, status);
+  if (!OK(status)) {
     StopListening();
     return;
   }
@@ -114,10 +112,8 @@ void Connection::Connect(Config config) {
       status() += "setsockopt(SO_REUSEADDR | SO_REUSEPORT) failed";
       return;
     }
-    Str err;
-    fd.Bind(config.local_ip, config.local_port, err);
-    if (!err.empty()) {
-      status() += err;
+    fd.Bind(config.local_ip, config.local_port, status);
+    if (!OK(status)) {
       return;
     }
   }

@@ -1,12 +1,11 @@
 #include "curve25519.hh"
 #include "epoll.hh"
+#include "gtest.hh"
 #include "hex.hh"
 #include "hkdf.hh"
 #include "ip.hh"
 #include "sha.hh"
 #include "tls.hh"
-
-#include <gtest/gtest.h>
 
 using namespace maf;
 

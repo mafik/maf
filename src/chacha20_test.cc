@@ -1,6 +1,6 @@
 #include "chacha20.hh"
 
-#include <gtest/gtest.h>
+#include "gtest.hh"
 
 #include "arr.hh"
 #include "hex.hh"

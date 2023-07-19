@@ -1,6 +1,6 @@
 #include "sha.hh"
 
-#include <gtest/gtest.h>
+#include "gtest.hh"
 
 #include "hex.hh"
 #include "str.hh"

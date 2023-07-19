@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 
 import argparse
-from pathlib import Path
-from collections.abc import Callable
 import sys
+from collections.abc import Callable
+from pathlib import Path
+from shutil import rmtree
+from subprocess import run
 
 
 class Fix:
@@ -22,6 +24,8 @@ maf_dir = Path('~/C++').expanduser()
 
 
 def tree_differs(a: Path, b: Path) -> bool:
+    if '__pycache__' in (a.name, b.name):
+        return False
     if a.exists() != b.exists():
         return True
     elif a.is_dir() != b.is_dir():
@@ -35,7 +39,7 @@ def tree_differs(a: Path, b: Path) -> bool:
 def check_hardlink(master: Path, slave: Path, issues: list[Issue]):
     def fix(master=master, slave=slave):
         if slave.exists():
-            slave.unlink()
+            rmtree(slave)
         if master.is_dir():
             slave.mkdir()
             for f in master.iterdir():
@@ -45,7 +49,8 @@ def check_hardlink(master: Path, slave: Path, issues: list[Issue]):
     if tree_differs(master, slave):
         fix_name = 'tree of hardlinks' if master.is_dir() else 'hardlink'
         issues.append(Issue(f'Path {slave} differs from {master}', [
-            Fix(f'Create a {fix_name} at {slave} pointing to {master}', fix)]))
+            Fix(f'Create a {fix_name} at {slave} pointing to {master}', fix),
+            Fix('Show diff', lambda: run(['diff', '-r', str(master), str(slave)]) and None)]))
 
 
 class Project:

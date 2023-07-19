@@ -1,6 +1,6 @@
 #include "poly1305.hh"
 
-#include <gtest/gtest.h>
+#include "gtest.hh"
 
 #include "arr.hh"
 #include "hex.hh"

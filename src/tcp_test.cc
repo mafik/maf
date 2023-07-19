@@ -1,7 +1,7 @@
 #include "epoll.hh"
 #include "tcp.hh"
 
-#include <gtest/gtest.h>
+#include "gtest.hh"
 
 using namespace maf;
 
