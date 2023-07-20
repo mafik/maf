@@ -6,6 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 from shutil import rmtree
 from subprocess import run
+from functools import partial
 
 
 class Fix:
@@ -37,7 +38,7 @@ def tree_differs(a: Path, b: Path) -> bool:
 
 
 def check_hardlink(master: Path, slave: Path, issues: list[Issue]):
-    def fix(master=master, slave=slave):
+    def fix(master, slave):
         if slave.exists():
             rmtree(slave)
         if master.is_dir():
@@ -49,8 +50,11 @@ def check_hardlink(master: Path, slave: Path, issues: list[Issue]):
     if tree_differs(master, slave):
         fix_name = 'tree of hardlinks' if master.is_dir() else 'hardlink'
         issues.append(Issue(f'Path {slave} differs from {master}', [
-            Fix(f'Create a {fix_name} at {slave} pointing to {master}', fix),
-            Fix('Show diff', lambda: run(['diff', '-r', str(master), str(slave)]) and None)]))
+            Fix('Show diff', lambda: run(
+                ['diff', '-r', str(master), str(slave)]) and None),
+            Fix(f'Replace {slave} with a {fix_name} pointing to {master}', partial(
+                fix, master, slave)),
+            Fix(f'Replace {master} with a {fix_name} pointing to {slave}', partial(fix, slave, master))]))
 
 
 class Project:

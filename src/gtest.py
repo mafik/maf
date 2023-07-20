@@ -38,8 +38,10 @@ def hook_final(srcs, objs, bins, recipe):
     tests = [
         bin for bin in bins if '-lgtest' in bin.link_args and bin.build_type == '' and bin.path.stem != 'gtest']
 
-    def run_tests(extra_args):
+    def run_tests():
         for test in tests:
             print(f'Running {test.path}')
-            run([str(test.path)] + test.run_args + extra_args, check=True)
-    recipe.add_step(run_tests, outputs=[], inputs=tests, name='tests')
+            run([str(test.path)] + test.run_args, check=True)
+
+    recipe.add_step(run_tests, outputs=[], inputs=tests,
+                    desc='Running tests', shortcut='tests')
