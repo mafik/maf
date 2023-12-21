@@ -7,25 +7,34 @@
 
 namespace maf {
 
-using MemView = Span<U8>;
+struct MemBuf : Vec<char> {
+  using Vec<char>::Vec;
+};
 
-using MemBuf = Vec<U8>;
+constexpr Size DynamicExtent = std::dynamic_extent;
 
-inline MemView MemViewOf(const Str &s) {
-  return MemView((U8 *)s.data(), s.size());
+template <std::size_t Extent = std::dynamic_extent>
+struct MemView : Span<char, Extent> {
+  using Span<char, Extent>::Span;
+
+  template <std::size_t ExtentRhs>
+  inline MemView &operator=(const Span<char, ExtentRhs> &rhs) {
+    Span<char, Extent>::operator=(rhs);
+    return *this;
+  }
+};
+
+inline auto MemViewOf(const Str &s) {
+  return MemView<>(const_cast<char *>(s.data()), s.size());
 }
 
-inline MemView MemViewOf(StrView s) {
-  return MemView((U8 *)s.data(), s.size());
-}
-
-inline MemView operator""_MemView(const char *str, size_t len) {
-  return MemView((U8 *)str, len);
+inline auto MemViewOf(StrView s) {
+  return MemView<>(const_cast<char *>(s.data()), s.size());
 }
 
 template <size_t N>
-inline constexpr Span<const U8, N - 1> StrSpan(const char (&str)[N]) {
-  return Span<const U8, N - 1>((const U8 *)str, N - 1);
+inline constexpr MemView<N - 1> MemViewOf(const char (&str)[N]) {
+  return MemView<N - 1>(const_cast<char *>(str), N - 1);
 }
 
 } // namespace maf

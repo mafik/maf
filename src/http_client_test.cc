@@ -15,9 +15,9 @@ using namespace maf::http;
 TEST(HttpClientTest, GetLatestGatekeeperFromGithub) {
   epoll::Init();
   bool got_response = false;
-  Get get(
-      "http://github.com/mafik/gatekeeper/releases/latest/download/gatekeeper",
-      [&] { got_response = true; });
+  Get get("http://github.com/mafik/gatekeeper/releases/latest/download/"
+          "gatekeeper.x86_64",
+          [&] { got_response = true; });
   epoll::Loop(get);
 
   EXPECT_TRUE(OK(get)) << ErrorMessage(get);

@@ -1,6 +1,5 @@
 #pragma once
 
-#include <list>
 #include <memory>
 #include <source_location>
 
@@ -13,6 +12,7 @@ struct Status {
     std::unique_ptr<Entry> next;
     std::source_location location;
     Str message;
+    Str advice;
   };
 
   std::unique_ptr<Entry> entry;
@@ -25,16 +25,29 @@ struct Status {
                       std::source_location::current());
 
   bool Ok() const;
-  Str ToString() const;
+  Str ToStr() const;
   void Reset();
 } __attribute__((packed));
 
-inline bool OK(const Status &s) { return s.Ok(); }
-inline Str ErrorMessage(const Status &s) { return s.ToString(); }
+inline bool OK(const Status &status) { return status.Ok(); }
+inline Str ErrorMessage(const Status &s) { return s.ToStr(); }
 inline Str &AppendErrorMessage(
-    Status &s,
+    Status &status,
     const std::source_location location_arg = std::source_location::current()) {
-  return s(location_arg);
+  return status(location_arg);
 }
+void AppendErrorAdvice(Status &, StrView advice);
+
+#define RETURN_ON_ERROR(status)                                                \
+  if (!OK(status)) {                                                           \
+    AppendErrorMessage(status) += __FUNCTION__;                                \
+    return;                                                                    \
+  }
+
+#define RETURN_VAL_ON_ERROR(status, value)                                     \
+  if (!OK(status)) {                                                           \
+    AppendErrorMessage(status) += __FUNCTION__;                                \
+    return value;                                                              \
+  }
 
 } // namespace maf

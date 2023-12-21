@@ -68,6 +68,7 @@ void Server::NotifyRead(Status &epoll_status) {
     if (conn_fd == -1) {
       if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
         // We have processed all incoming connections.
+        errno = 0;
         break;
       }
       status() += "accept4()";
@@ -79,7 +80,7 @@ void Server::NotifyRead(Status &epoll_status) {
       return;
     }
     NotifyAcceptedTCP(std::move(conn_fd), IP(addr.sin_addr.s_addr),
-                      ntohs(addr.sin_port));
+                      Big(addr.sin_port).big_endian);
   }
 }
 
@@ -119,7 +120,7 @@ void Connection::Connect(Config config) {
   }
 
   sockaddr_in address = {.sin_family = AF_INET,
-                         .sin_port = htons(config.remote_port),
+                         .sin_port = Big(config.remote_port).big_endian,
                          .sin_addr = {.s_addr = config.remote_ip.addr}};
   if (int r = connect(fd, (sockaddr *)&address, sizeof(address)); r < 0) {
     if (errno != EINPROGRESS) {
@@ -159,6 +160,7 @@ void Connection::Send() {
   if (count == -1) {
     if (errno == EWOULDBLOCK || errno == EAGAIN) {
       // We must wait for the data to be sent before writing more.
+      errno = 0;
       write_buffer_full = true;
       UpdateEpoll(*this);
       return;
@@ -204,6 +206,7 @@ void Connection::NotifyRead(Status &epoll_status) {
   if (count == -1) {
     if (errno == EWOULDBLOCK) {
       // We must wait for more data to arrive to process this request.
+      errno = 0;
       return;
     }
     // Connection is broken. Discard it.

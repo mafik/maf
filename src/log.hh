@@ -27,10 +27,9 @@
 #include <chrono>
 #include <functional>
 #include <source_location>
-#include <string>
-#include <string_view>
 
 #include "status.hh"
+#include "str.hh"
 
 namespace maf {
 
@@ -51,33 +50,23 @@ struct LogEntry {
 
 using Logger = std::function<void(const LogEntry &)>;
 
+void DefaultLogger(const LogEntry &e);
+
 // The default logger prints to stdout (or JavaScript console when running under
 // Emscripten).
 extern std::vector<Logger> loggers;
 
-#define LOG LogEntry(LogLevel::Info, std::source_location::current())
-#define ERROR LogEntry(LogLevel::Error, std::source_location::current())
-#define FATAL LogEntry(LogLevel::Fatal, std::source_location::current())
+#define LOG maf::LogEntry(maf::LogLevel::Info, std::source_location::current())
+#define ERROR                                                                  \
+  maf::LogEntry(maf::LogLevel::Error, std::source_location::current())
+#define FATAL                                                                  \
+  maf::LogEntry(maf::LogLevel::Fatal, std::source_location::current())
 
-const LogEntry &operator<<(const LogEntry &, int);
-const LogEntry &operator<<(const LogEntry &, long);
-const LogEntry &operator<<(const LogEntry &, unsigned);
-const LogEntry &operator<<(const LogEntry &, unsigned long);
-const LogEntry &operator<<(const LogEntry &, unsigned long long);
-const LogEntry &operator<<(const LogEntry &, float);
-const LogEntry &operator<<(const LogEntry &, double);
-const LogEntry &operator<<(const LogEntry &, std::string_view);
-const LogEntry &operator<<(const LogEntry &, const unsigned char *);
+const LogEntry &operator<<(const LogEntry &, StrView);
 const LogEntry &operator<<(const LogEntry &, Status &status);
 
-template <typename T>
-concept loggable = requires(T &v) {
-  // TODO: Switch to `ToString`.
-  { v.LoggableString() } -> std::convertible_to<std::string_view>;
-};
-
-const LogEntry &operator<<(const LogEntry &logger, loggable auto &t) {
-  return logger << t.LoggableString();
+const LogEntry &operator<<(const LogEntry &logger, const Stringer auto &t) {
+  return logger << ToStr(t);
 }
 
 void LOG_Indent(int n = 2);

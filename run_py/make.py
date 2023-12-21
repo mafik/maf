@@ -21,7 +21,10 @@ def Popen(args, **kwargs):
     '''Wrapper around subprocess.Popen which captures STDERR into a temporary file.'''
     f = tempfile.TemporaryFile()
     str_args = [str(x) for x in args]
-    p = subprocess.Popen(str_args, stderr=f, **kwargs)
+    p = subprocess.Popen(str_args,
+                         stdin=subprocess.DEVNULL,
+                         stderr=f,
+                         **kwargs)
     p.stderr = f
     return p
 
@@ -39,7 +42,15 @@ def hexdigest(path):
 
 
 class Step:
-    def __init__(self, build_func, outputs, inputs, id, desc=None, shortcut=None, stderr_prettifier=lambda x: x):
+
+    def __init__(self,
+                 build_func,
+                 outputs,
+                 inputs,
+                 id,
+                 desc=None,
+                 shortcut=None,
+                 stderr_prettifier=lambda x: x):
         if not desc:
             desc = f'Running {build_func.__name__}'
         if not shortcut:
@@ -73,8 +84,9 @@ class Step:
 
         # Check 2: Check whether the inputs are older than outputs.
         if self.outputs:
-            build_time = min(Path(t).stat().st_mtime if Path(
-                t).exists() else 0 for t in self.outputs)
+            build_time = min(
+                Path(t).stat().st_mtime if Path(t).exists() else 0
+                for t in self.outputs)
         else:
             build_time = 0
         updated_inputs = []
@@ -97,15 +109,15 @@ class Step:
         for line in hash_path.open().readlines():
             inp, hsh = line.split()
             recorded_hashes[inp] = hsh
-        changed_inputs = [inp for inp in updated_inputs if hexdigest(
-            inp) != recorded_hashes[inp]]
+        changed_inputs = [
+            inp for inp in updated_inputs
+            if hexdigest(inp) != recorded_hashes[inp]
+        ]
         return changed_inputs
 
-    def is_dirty(self):
-        return len(self.dirty_inputs()) > 0
-
     def build_if_needed(self):
-        if len(self.inputs) == 0 and any(not Path(out).exists() for out in self.outputs):
+        if len(self.inputs) == 0 and any(not Path(out).exists()
+                                         for out in self.outputs):
             return self.build_and_log([])
         updated_inputs = self.dirty_inputs()
         if len(updated_inputs) > 0:
@@ -115,6 +127,10 @@ class Step:
 
 
 class Recipe:
+    steps: list[Step]
+    generated: set[str]
+    pid_to_step: dict[int, Step]
+
     def __init__(self):
         '''A list of steps that should be taken in order to build the final product.'''
         self.steps = []
@@ -134,10 +150,6 @@ class Recipe:
                 else:
                     print(f'  > rmtree {p}')
                     shutil.rmtree(p)
-
-    def is_dirty(self):
-        '''Returns True if the recipe needs to be built.'''
-        return any(s.is_dirty() for s in self.steps)
 
     def add_step(self, *args, **kwargs):
         self.steps.append(Step(*args, id=len(self.steps), **kwargs))
@@ -162,7 +174,8 @@ class Recipe:
             else:
                 targets = ', '.join([s.shortcut for s in self.steps])
                 raise Exception(
-                    f'{target} is not a valid target. Valid targets: {targets}.')
+                    f'{target} is not a valid target. Valid targets: {targets}.'
+                )
 
         new_steps = set()
         q = [target_step]
@@ -175,7 +188,8 @@ class Recipe:
                     q.append(dep)
                 elif not Path(input).exists():
                     raise Exception(
-                        f'"{step.desc}" requires `{input}` but it doesn\'t exist and there is no recipe to build it.')
+                        f'"{step.desc}" requires `{input}` but it doesn\'t exist and there is no recipe to build it.'
+                    )
         new_steps = list(new_steps)
         new_steps.sort(key=self.steps.index)
 
@@ -225,16 +239,19 @@ class Recipe:
                 return os.wait()
 
         while ready_steps or self.pid_to_step:
-            if len(ready_steps) == 0 or len(self.pid_to_step) >= desired_parallelism:
+            if len(ready_steps) == 0 or len(
+                    self.pid_to_step) >= desired_parallelism:
                 running_names = ', '.join(
                     [r.shortcut for r in self.pid_to_step.values()])
                 print(
-                    f'Waiting for one of {len(self.pid_to_step)} running steps ({running_names})...')
+                    f'Waiting for one of {len(self.pid_to_step)} running steps ({running_names})...'
+                )
                 pid, status = wait_for_pid()
                 if pid == watcher.pid:
                     self.interrupt()
                     print(
-                        'Sources have been modified. Interrupting the build process...')
+                        'Sources have been modified. Interrupting the build process...'
+                    )
                     return False
                 step = self.pid_to_step[pid]
                 if status:
@@ -261,8 +278,8 @@ class Recipe:
                         self.pid_to_step[builder.pid] = next
                     else:
                         on_step_finished(next)
-                except subprocess.CalledProcessError:
-                    print(f'{next.desc} finished with an error.')
+                except subprocess.CalledProcessError as err:
+                    print(f'{next.desc} finished with an error.', err)
                     self.interrupt()
                     return False
                 except FileNotFoundError as err:
@@ -270,7 +287,8 @@ class Recipe:
                     self.interrupt()
                     return False
         print(
-            f'Build took {time.time() - start_time:.3f} seconds ({len(self.steps)} steps)')
+            f'Build took {time.time() - start_time:.3f} seconds ({len(self.steps)} steps)'
+        )
         return True
 
     def interrupt(self):

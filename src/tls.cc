@@ -1,9 +1,7 @@
 #include "tls.hh"
 
-#include <algorithm>
 #include <cstring>
 #include <initializer_list>
-#include <optional>
 
 #include "aead_chacha20_poly1305.hh"
 #include "big_endian.hh"
@@ -15,6 +13,7 @@
 #include "log.hh"
 #include "poly1305.hh"
 #include "sha.hh"
+#include "span.hh"
 #include "status.hh"
 
 namespace maf::tls {
@@ -26,32 +25,31 @@ struct RecordHeader {
   U8 version_major;
   U8 version_minor;
   Big<U16> length;
-  U8 contents[0];
+  char contents[0];
 
   void Validate(Status &status) {
     if (version_major != 3) {
-      status() += "TLS Record Header major version is " +
-                  std::to_string(version_major) + " but expected 3";
+      status() += "TLS Record Header major version is " + ToStr(version_major) +
+                  " but expected 3";
       return;
     }
     if (version_minor != 1 && version_minor != 3 && version_minor != 4) {
-      status() += "TLS Record Header minor version is " +
-                  std::to_string(version_minor) +
+      status() += "TLS Record Header minor version is " + ToStr(version_minor) +
                   " but expected 3 (TLS 1.2) or 4 (TLS 1.3)";
       return;
     }
   }
 
-  operator Span<const U8>() { return {(U8 *)this, sizeof(RecordHeader)}; }
-  MemView Contents() { return {contents, length.get()}; }
+  operator Span<>() { return {(char *)this, sizeof(*this)}; }
+  Span<> Contents() { return {contents, length.Get()}; }
 };
 
 static_assert(sizeof(RecordHeader) == 5,
               "tls::RecordHeader should have 5 bytes");
 
-void HKDF_Expand_Label(MemView key, StrView label, MemView ctx, MemView out) {
-  MemBuf hkdf_label;
-  AppendBigEndian<U16>(hkdf_label, out.size());
+void HKDF_Expand_Label(Span<> key, StrView label, Span<> ctx, Span<> out) {
+  Vec<> hkdf_label;
+  hkdf_label.Append(Big<U16>(out.size()));
   hkdf_label.push_back(label.size());
   hkdf_label.insert(hkdf_label.end(), label.begin(), label.end());
   hkdf_label.push_back(ctx.size());
@@ -59,12 +57,12 @@ void HKDF_Expand_Label(MemView key, StrView label, MemView ctx, MemView out) {
   HKDF_Expand<SHA256>(key, hkdf_label, out);
 }
 
-Arr<U8, 32> zero_key = {};
-SHA256 early_secret = HKDF_Extract<SHA256>("\x00"_MemView, zero_key);
-SHA256 empty_hash("");
-Arr<U8, 6> kClientChangeCipherSpec = HexArr("140303000101");
+Arr<char, 32> zero_key = {};
+SHA256 early_secret = HKDF_Extract<SHA256>(Span<>("\x00", 1), zero_key);
+SHA256 empty_hash(kEmptySpan);
+Arr<char, 6> kClientChangeCipherSpec = HexArr("140303000101");
 
-static void XorIV(Arr<U8, 12> &iv, U64 counter) {
+static void XorIV(Arr<char, 12> &iv, U64 counter) {
   for (int i = 0; i < sizeof(counter); ++i) {
     iv[11 - i] ^= (counter >> (i * 8)) & 0xff;
   }
@@ -72,19 +70,19 @@ static void XorIV(Arr<U8, 12> &iv, U64 counter) {
 
 // Responsible for encrypting & decrypting TLS records
 struct RecordWrapper {
-  Arr<U8, 32> key;
-  Arr<U8, 12> iv;
+  Arr<char, 32> key;
+  Arr<char, 12> iv;
   U64 counter = 0;
 
   // Constructs uninitialized RecordWrapper
   RecordWrapper() = default;
 
-  RecordWrapper(Span<U8, 32> secret) {
-    HKDF_Expand_Label(secret, "tls13 key", ""_MemView, key);
-    HKDF_Expand_Label(secret, "tls13 iv", ""_MemView, iv);
+  RecordWrapper(Span<char, 32> secret) {
+    HKDF_Expand_Label(secret, "tls13 key", kEmptySpan, key);
+    HKDF_Expand_Label(secret, "tls13 iv", kEmptySpan, iv);
   }
 
-  void Wrap(MemBuf &buf, U8 record_type, std::function<void()> wrapped) {
+  void Wrap(Vec<> &buf, U8 record_type, std::function<void()> wrapped) {
     Size header_begin = buf.size();
     buf.insert(buf.end(), {0x17, 0x03, 0x03, 0x00,
                            0x00}); // application data, TLS 1.2, length
@@ -97,17 +95,19 @@ struct RecordWrapper {
     Size tag_begin = buf.size();
     buf.insert(buf.end(), 16, 0); // Poly1305 tag
     Size tag_end = buf.size();
-    PutBigEndian<U16>(buf, record_length_offset, tag_end - record_begin);
+    buf.Span()
+        .RemovePrefix(record_length_offset)
+        .PutRef(Big<U16>(tag_end - record_begin));
     XorIV(iv, counter);
-    auto data = MemView(buf.begin() + record_begin, buf.begin() + record_end);
-    auto aad = MemView(buf.begin() + header_begin, buf.begin() + header_end);
+    auto data = Span<>(buf.begin() + record_begin, buf.begin() + record_end);
+    auto aad = Span<>(buf.begin() + header_begin, buf.begin() + header_end);
     auto tag = Encrypt_AEAD_CHACHA20_POLY1305(key, iv, data, aad);
     XorIV(iv, counter);
     ++counter;
     memcpy(buf.data() + tag_begin, tag.bytes, 16);
   }
 
-  bool Unwrap(RecordHeader &record, MemView &data, U8 &true_type) {
+  bool Unwrap(RecordHeader &record, Span<> &data, U8 &true_type) {
     auto contents = record.Contents();
     Poly1305 tag(contents.last<16>());
     data = contents.first(contents.size() - 16);
@@ -124,7 +124,7 @@ struct RecordWrapper {
   }
 };
 
-StrView AlertLevelToString(U8 level) {
+StrView AlertLevelToStr(U8 level) {
   switch (level) {
   case 1:
     return "warning";
@@ -135,7 +135,7 @@ StrView AlertLevelToString(U8 level) {
   }
 }
 
-StrView AlertDescriptionToString(U8 desc) {
+StrView AlertDescriptionToStr(U8 desc) {
   switch (desc) {
   case 0:
     return "close_notify";
@@ -218,7 +218,7 @@ struct Phase3 : Phase {
 
   Phase3(Connection &conn, SHA256 handshake_secret, SHA256 handshake_hash)
       : Phase(conn) {
-    Arr<U8, 32> derived, client_secret, server_secret; // Hash-size-bytes
+    Arr<char, 32> derived, client_secret, server_secret; // Hash-size-bytes
     HKDF_Expand_Label(handshake_secret, "tls13 derived", empty_hash, derived);
     auto master_secret = HKDF_Extract<SHA256>(derived, zero_key);
     HKDF_Expand_Label(master_secret, "tls13 c ap traffic", handshake_hash,
@@ -237,7 +237,7 @@ struct Phase3 : Phase {
             record.type);
       return;
     }
-    MemView data;
+    Span<> data;
     U8 true_type;
     if (!server_wrapper.Unwrap(record, data, true_type)) {
       AppendErrorMessage(conn) += "Couldn't decrypt TLS record";
@@ -257,9 +257,9 @@ struct Phase3 : Phase {
         U8 description = data[1];
         Str &msg = AppendErrorMessage(conn);
         msg += "Received ";
-        msg += AlertLevelToString(level);
+        msg += AlertLevelToStr(level);
         msg += " TLS Alert: ";
-        msg += AlertDescriptionToString(description);
+        msg += AlertDescriptionToStr(description);
         return;
       }
     } else if (true_type == 22) { // Handshake
@@ -287,7 +287,7 @@ struct Phase3 : Phase {
 struct Phase2 : Phase {
   SHA256::Builder handshake_hash_builder;
   SHA256 handshake_secret;
-  Arr<U8, 32> client_secret;
+  Arr<char, 32> client_secret;
   RecordWrapper server_wrapper;
   RecordWrapper client_wrapper;
   bool send_tls_requested;
@@ -298,7 +298,7 @@ struct Phase2 : Phase {
         send_tls_requested(send_tls_requested) {
     auto hello_hash_builder = handshake_hash_builder;
     auto hello_hash = hello_hash_builder.Finalize();
-    Arr<U8, 32> derived, server_secret; // Hash-size-bytes
+    Arr<char, 32> derived, server_secret; // Hash-size-bytes
 
     HKDF_Expand_Label(early_secret, "tls13 derived", empty_hash, derived);
     handshake_secret = HKDF_Extract<SHA256>(derived, shared_secret);
@@ -319,7 +319,7 @@ struct Phase2 : Phase {
       AppendErrorMessage(conn) += f("Received TLS record type %d", type);
       return;
     }
-    MemView data;
+    Span<> data;
     U8 true_type;
     if (!server_wrapper.Unwrap(record, data, true_type)) {
       AppendErrorMessage(conn) += "Couldn't decrypt TLS record";
@@ -335,8 +335,8 @@ struct Phase2 : Phase {
     handshake_hash_builder.Update(data);
 
     while (!data.empty()) {
-      U8 handshake_type = ConsumeBigEndian<U8>(data);
-      U24 handshake_length = ConsumeBigEndian<U24>(data);
+      U8 handshake_type = data.Consume<U8>();
+      U24 handshake_length = data.Consume<Big<U24>>();
       if (handshake_length > data.size()) {
         AppendErrorMessage(conn) +=
             "TLS handshake failed because of record with invalid length";
@@ -360,13 +360,13 @@ struct Phase2 : Phase {
                                           kClientChangeCipherSpec.end());
 
         client_wrapper.Wrap(conn.tcp_connection.outbox, 0x16, [&]() {
-          Arr<U8, 32> finished_key; // Hash-size-bytes
-          HKDF_Expand_Label(client_secret, "tls13 finished", ""_MemView,
+          Arr<char, 32> finished_key; // Hash-size-bytes
+          HKDF_Expand_Label(client_secret, "tls13 finished", kEmptySpan,
                             finished_key);
           SHA256 verify_data = HMAC<SHA256>(finished_key, handshake_hash);
           auto &buf = conn.tcp_connection.outbox;
           buf.push_back(0x14); // handshake
-          AppendBigEndian<U24>(buf, 32);
+          buf.Append(Big<U24>(32));
           buf.insert(buf.end(), verify_data.bytes, verify_data.bytes + 32);
         });
 
@@ -416,7 +416,7 @@ struct Phase1 : Phase {
     auto client_public = curve25519::Public::FromPrivate(client_secret);
 
     // Send "Client Hello"
-    auto Append = [&](const std::initializer_list<U8> bytes) {
+    auto Append = [&](const std::initializer_list<char> bytes) {
       send_tcp.insert(send_tcp.end(), bytes);
     };
     Append({0x16}); // handshake
@@ -474,10 +474,10 @@ struct Phase1 : Phase {
       auto entry_length = hostname_length + 3;
       auto extension_length = entry_length + 2;
       Append({0x00, 0x00}); // extension type: server name
-      AppendBigEndian<U16>(send_tcp, extension_length);
-      AppendBigEndian<U16>(send_tcp, entry_length);
+      send_tcp.Append(Big<U16>(extension_length));
+      send_tcp.Append(Big<U16>(entry_length));
       Append({0x00}); // entry type: DNS hostname
-      AppendBigEndian<U16>(send_tcp, hostname_length);
+      send_tcp.Append(Big<U16>(hostname_length));
       send_tcp.insert(send_tcp.end(), config.server_name->begin(),
                       config.server_name->end());
     }
@@ -556,23 +556,26 @@ struct Phase1 : Phase {
     send_tcp.insert(send_tcp.end(), client_public.bytes.begin(),
                     client_public.bytes.end());
 
-    PutBigEndian<U16>(send_tcp, extensions_length_offset,
-                      send_tcp.size() - extensions_begin);
-    PutBigEndian<U24>(send_tcp, handshake_length_offset,
-                      send_tcp.size() - handshake_begin);
-    PutBigEndian<U16>(send_tcp, record_length_offset,
-                      send_tcp.size() - record_begin);
+    send_tcp.Span()
+        .RemovePrefix(extensions_length_offset)
+        .PutRef(Big<U16>(send_tcp.size() - extensions_begin));
+    send_tcp.Span()
+        .RemovePrefix(handshake_length_offset)
+        .PutRef(Big<U24>(send_tcp.size() - handshake_begin));
+    send_tcp.Span()
+        .RemovePrefix(record_length_offset)
+        .PutRef(Big<U16>(send_tcp.size() - record_begin));
 
-    sha_builder.Update(
-        MemView((U8 *)&send_tcp[record_begin], send_tcp.size() - record_begin));
+    sha_builder.Update(Span<>((char *)&send_tcp[record_begin],
+                              send_tcp.size() - record_begin));
 
     conn.tcp_connection.Send();
   }
 
-  void ProcessHandshake(Connection &conn, MemView handshake) {
-    MemView server_hello = handshake;
-    U8 handshake_type = ConsumeBigEndian<U8>(server_hello);
-    U24 handshake_length = ConsumeBigEndian<U24>(server_hello);
+  void ProcessHandshake(Connection &conn, Span<> handshake) {
+    Span<> server_hello = handshake;
+    U8 handshake_type = server_hello.Consume<U8>();
+    U24 handshake_length = server_hello.Consume<Big<U24>>();
     if (handshake_length > server_hello.size()) {
       AppendErrorMessage(conn) +=
           f("TLS Handshake Header claims length %d but there are "
@@ -588,19 +591,18 @@ struct Phase1 : Phase {
       return;
     }
 
-    U8 server_version_major = ConsumeBigEndian<U8>(server_hello);
-    U8 server_version_minor = ConsumeBigEndian<U8>(server_hello);
+    U8 server_version_major = server_hello.Consume<U8>();
+    U8 server_version_minor = server_hello.Consume<U8>();
     server_hello = server_hello.subspan<32>(); // server random
-    U8 session_id_length = ConsumeBigEndian<U8>(server_hello);
+    U8 session_id_length = server_hello.Consume<U8>();
     server_hello = server_hello.subspan(session_id_length);
-    U16 cipher_suite = ConsumeBigEndian<U16>(server_hello);
-    U8 compression_method = ConsumeBigEndian<U8>(server_hello);
-    U16 extensions_length = ConsumeBigEndian<U16>(server_hello);
+    U16 cipher_suite = server_hello.Consume<Big<U16>>();
+    U8 compression_method = server_hello.Consume<U8>();
+    U16 extensions_length = server_hello.Consume<Big<U16>>();
     if (extensions_length != server_hello.size()) {
       AppendErrorMessage(conn) +=
-          "Server hello extensions_length is " +
-          std::to_string((U32)extensions_length) + " but there are still " +
-          std::to_string(server_hello.size()) + " bytes left";
+          "Server hello extensions_length is " + ToStr((U32)extensions_length) +
+          " but there are still " + ToStr(server_hello.size()) + " bytes left";
       return;
     }
 
@@ -610,8 +612,8 @@ struct Phase1 : Phase {
     curve25519::Public server_public;
 
     while (!server_hello.empty()) {
-      U16 extension_type = ConsumeBigEndian<U16>(server_hello);
-      U16 extension_length = ConsumeBigEndian<U16>(server_hello);
+      U16 extension_type = server_hello.Consume<Big<U16>>();
+      U16 extension_length = server_hello.Consume<Big<U16>>();
       if (extension_length > server_hello.size()) {
         AppendErrorMessage(conn) +=
             f("Server hello extension_length is %d but there are "
@@ -619,16 +621,16 @@ struct Phase1 : Phase {
               extension_length, server_hello.size());
         return;
       }
-      MemView extension_data = server_hello.first(extension_length);
+      Span<> extension_data = server_hello.first(extension_length);
       server_hello = server_hello.subspan(extension_length);
       switch (extension_type) {
       case 0x2b: // supported_versions
-        supported_version_major = ConsumeBigEndian<U8>(extension_data);
-        supported_version_minor = ConsumeBigEndian<U8>(extension_data);
+        supported_version_major = extension_data.Consume<U8>();
+        supported_version_minor = extension_data.Consume<U8>();
         break;
       case 0x33: { // key share
-        U16 group = ConsumeBigEndian<U16>(extension_data);
-        U16 length = ConsumeBigEndian<U16>(extension_data);
+        U16 group = extension_data.Consume<Big<U16>>();
+        U16 length = extension_data.Consume<Big<U16>>();
         if (length != extension_data.size()) {
           AppendErrorMessage(conn) += f(
               "Server Hello key share length is %d but there are %d bytes left",
@@ -658,7 +660,7 @@ struct Phase1 : Phase {
         break;
       }
       } // switch (extension_type)
-    }   // while (!server_hello.empty())
+    } // while (!server_hello.empty())
 
     sha_builder.Update(handshake);
     curve25519::Shared shared_secret =
@@ -693,7 +695,7 @@ void Connection::Send() { phase->PhaseSend(); }
 void Connection::Close() { tcp_connection.Close(); }
 
 Size ConsumeRecord(Connection &conn) {
-  MemBuf &received_tcp = conn.tcp_connection.inbox;
+  Vec<> &received_tcp = conn.tcp_connection.inbox;
   if (received_tcp.size() < 5) {
     return 0; // wait for more data
   }
@@ -703,7 +705,7 @@ Size ConsumeRecord(Connection &conn) {
     AppendErrorMessage(conn) += "TLS stream corrupted";
     return 0;
   }
-  Size record_size = sizeof(RecordHeader) + record_header.length.get();
+  Size record_size = sizeof(RecordHeader) + record_header.length.Get();
   if (received_tcp.size() < record_size) {
     return 0; // wait for more data
   }

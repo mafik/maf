@@ -4,7 +4,7 @@
 #include <fcntl.h>
 #include <sys/epoll.h>
 
-// #define DEBUG_EPOLL
+//  #define DEBUG_EPOLL
 
 #ifdef DEBUG_EPOLL
 #include "log.hh"
@@ -39,8 +39,8 @@ void Add(Listener *listener, Status &status) {
   }
   epoll_event ev = MakeEpollEvent(listener);
   if (int r = epoll_ctl(fd, EPOLL_CTL_ADD, listener->fd, &ev); r == -1) {
-    status() += "epoll_ctl(EPOLL_CTL_ADD) epfd=" + std::to_string(fd) +
-                " fd=" + std::to_string(listener->fd);
+    status() += "epoll_ctl(EPOLL_CTL_ADD) epfd=" + ToStr(fd) +
+                " fd=" + ToStr(listener->fd);
     return;
   }
   ++listener_count;
@@ -112,6 +112,13 @@ void Loop(Status &status) {
 #endif
           return;
         }
+#ifdef DEBUG_EPOLL
+        if (errno) {
+          ERROR << l->Name()
+                << " didn't clean errno after NotifyRead: " << strerror(errno);
+          errno = 0;
+        }
+#endif
       }
       if (events[i].data.ptr == nullptr)
         continue;
@@ -123,6 +130,13 @@ void Loop(Status &status) {
 #endif
           return;
         }
+#ifdef DEBUG_EPOLL
+        if (errno) {
+          ERROR << l->Name()
+                << " didn't clean errno after NotifyWrite: " << strerror(errno);
+          errno = 0;
+        }
+#endif
       }
     }
     events_count = 0;

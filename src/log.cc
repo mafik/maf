@@ -26,7 +26,7 @@ LogEntry::~LogEntry() {
   }
 
   if (log_level == LogLevel::Fatal) {
-    buffer += f(" Crashing in %s:%d [%s].", location.file_name(),
+    buffer += f(". Crashing in %s:%d [%s].", location.file_name(),
                 location.line(), location.function_name());
   }
 
@@ -35,73 +35,37 @@ LogEntry::~LogEntry() {
   }
 
   if (log_level == LogLevel::Fatal) {
+    fflush(stdout);
+    fflush(stderr);
     abort();
   }
 }
 
-void __attribute__((__constructor__)) InitDefaultLoggers() {
-  loggers.emplace_back([](const LogEntry &e) {
+void DefaultLogger(const LogEntry &e) {
 #if defined(__EMSCRIPTEN__)
-    if (e.log_level == LogLevel::Error) {
-      EM_ASM({ console.warn(UTF8ToString($0)); }, e.buffer.c_str());
-    } else if (e.log_level == LogLevel::Fatal) {
-      EM_ASM({ console.error(UTF8ToString($0)); }, e.buffer.c_str());
-    } else {
-      EM_ASM({ console.log(UTF8ToString($0)); }, e.buffer.c_str());
-    }
+  if (e.log_level == LogLevel::Error) {
+    EM_ASM({ console.warn(UTF8ToString($0)); }, e.buffer.c_str());
+  } else if (e.log_level == LogLevel::Fatal) {
+    EM_ASM({ console.error(UTF8ToString($0)); }, e.buffer.c_str());
+  } else {
+    EM_ASM({ console.log(UTF8ToString($0)); }, e.buffer.c_str());
+  }
 #else
-    printf("%s\n", e.buffer.c_str());
+  printf("%s\n", e.buffer.c_str());
 #endif
-  });
 }
 
-const LogEntry &operator<<(const LogEntry &logger, int i) {
-  logger.buffer += std::to_string(i);
-  return logger;
+void __attribute__((__constructor__)) InitDefaultLoggers() {
+  loggers.emplace_back(DefaultLogger);
 }
 
-const LogEntry &operator<<(const LogEntry &logger, long i) {
-  logger.buffer += std::to_string(i);
-  return logger;
-}
-
-const LogEntry &operator<<(const LogEntry &logger, unsigned i) {
-  logger.buffer += std::to_string(i);
-  return logger;
-}
-
-const LogEntry &operator<<(const LogEntry &logger, unsigned long i) {
-  logger.buffer += std::to_string(i);
-  return logger;
-}
-
-const LogEntry &operator<<(const LogEntry &logger, unsigned long long i) {
-  logger.buffer += std::to_string(i);
-  return logger;
-}
-
-const LogEntry &operator<<(const LogEntry &logger, float f) {
-  logger.buffer += std::to_string(f);
-  return logger;
-}
-
-const LogEntry &operator<<(const LogEntry &logger, double d) {
-  logger.buffer += std::to_string(d);
-  return logger;
-}
-
-const LogEntry &operator<<(const LogEntry &logger, std::string_view s) {
+const LogEntry &operator<<(const LogEntry &logger, StrView s) {
   logger.buffer += s;
   return logger;
 }
 
-const LogEntry &operator<<(const LogEntry &logger, const unsigned char *s) {
-  logger.buffer += (const char *)s;
-  return logger;
-}
-
 const LogEntry &operator<<(const LogEntry &logger, Status &status) {
-  logger.buffer += status.ToString();
+  logger.buffer += status.ToStr();
   logger.errsv = status.errsv;
   return logger;
 }

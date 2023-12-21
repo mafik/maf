@@ -18,9 +18,15 @@ Str &Status::operator()(const std::source_location location_arg) {
   return entry->message;
 }
 
+void AppendErrorAdvice(Status &status, StrView advice) {
+  if (status.entry) {
+    status.entry->advice += advice;
+  }
+}
+
 bool Status::Ok() const { return errsv == 0 && entry == nullptr; }
 
-Str Status::ToString() const {
+Str Status::ToStr() const {
   Str ret;
   for (Entry *i = entry.get(); i != nullptr; i = i->next.get()) {
     if (!ret.empty()) {
@@ -33,15 +39,13 @@ Str Status::ToString() const {
     auto &location = i->location;
     ret += f("(%s:%d).", location.file_name(), location.line());
   }
-  if (!ret.empty()) {
-    ret += " ";
-  }
-  if (errno) {
+  if (errsv) {
+    if (!ret.empty()) {
+      ret += " ";
+    }
     ret += strerror(errsv);
-  } else {
-    ret += "Errno not set";
+    ret += '.';
   }
-  ret += ".";
   return ret;
 }
 

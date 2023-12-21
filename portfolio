@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -23,18 +24,44 @@ class Issue:
 
 maf_dir = Path('~/C++').expanduser()
 
+class Difference:
+    def __init__(self, a: Path, b: Path, explanation: str):
+        self.a = a
+        self.b = b
+        self.explanation = explanation
+    
+    def __str__(self):
+        return self.explanation
 
-def tree_differs(a: Path, b: Path) -> bool:
+def tree_differs(a: Path, b: Path) -> list[Difference]:
     if '__pycache__' in (a.name, b.name):
-        return False
+        return []
     if a.exists() != b.exists():
-        return True
+        if a.exists():
+            return [Difference(a, b, f'{a} exists while {b} does not')]
+        else:
+            return [Difference(a, b, f'{b} exists while {a} does not')]
     elif a.is_dir() != b.is_dir():
-        return True
+        if a.is_dir():
+            return [Difference(a, b, f'{a} is a directory while {b} is not')]
+        else:
+            return [Difference(a, b, f'{b} is a directory while {a} is not')]
     elif a.is_dir():
-        return any(tree_differs(f, b / f.name) for f in a.iterdir())
+        ret = []
+        fnames = set(f.name for f in a.iterdir()) | set(f.name for f in b.iterdir())
+        for fname in fnames:
+            ret += tree_differs(a / fname, b / fname)
+        return ret
     else:
-        return a.stat().st_ino != b.stat().st_ino
+        ret = a.stat().st_ino != b.stat().st_ino
+        if ret:
+            diffs = subprocess.check_output(['diff', a, b]).decode('utf-8')
+            if diffs:
+                return [Difference(a, b, f'{a} and {b} have different contents: {diffs}')]
+            else:
+                return [Difference(a, b, f'{a} and {b} are not hardlinked (same contents)')]
+        else:
+            return []
 
 
 def check_hardlink(master: Path, slave: Path, issues: list[Issue]):
@@ -47,11 +74,11 @@ def check_hardlink(master: Path, slave: Path, issues: list[Issue]):
                 fix(f, slave / f.name)
         else:
             slave.hardlink_to(master)
-    if tree_differs(master, slave):
+    differences = tree_differs(master, slave)
+    if differences:
         fix_name = 'tree of hardlinks' if master.is_dir() else 'hardlink'
         issues.append(Issue(f'Path {slave} differs from {master}', [
-            Fix('Show diff', lambda: run(
-                ['diff', '-r', str(master), str(slave)]) and None),
+            Fix('Show diff', lambda: print('\n'.join(str(d) for d in differences))),
             Fix(f'Replace {slave} with a {fix_name} pointing to {master}', partial(
                 fix, master, slave)),
             Fix(f'Replace {master} with a {fix_name} pointing to {slave}', partial(fix, slave, master))]))
@@ -164,6 +191,10 @@ def include():
         project_file.hardlink_to(maf_file)
 
 
+def test():
+    pass
+
+
 def main():
     parser = argparse.ArgumentParser(description='Manage projects based on namespace maf',
                                      usage='''portfolio <command> [<args>]
@@ -171,8 +202,9 @@ def main():
 Available commands:
    check      Check for (& fix) issues in projects
    include    Include a pair of .hh/.cc files in a project
+   test       Run tests
 ''')
-    parser.add_argument('action', choices=['check', 'include'])
+    parser.add_argument('action', choices=['check', 'include', 'test'])
     args = parser.parse_args(sys.argv[1:2])
 
     if args.action not in globals():

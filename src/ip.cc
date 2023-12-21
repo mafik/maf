@@ -9,9 +9,11 @@
 
 namespace maf {
 
+const IP IP::kZero;
+
 IP IP::FromInterface(std::string_view interface_name, Status &status) {
   ifreq ifr = {};
-  int sock = socket(AF_INET, SOCK_DGRAM, 0);
+  int sock = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
   strncpy(ifr.ifr_name, interface_name.data(), IFNAMSIZ - 1);
   if (ioctl(sock, SIOCGIFADDR, &ifr) < 0) {
     status() = "ioctl(SIOCGIFADDR) failed";
@@ -24,7 +26,7 @@ IP IP::FromInterface(std::string_view interface_name, Status &status) {
 
 IP IP::NetmaskFromInterface(std::string_view interface_name, Status &status) {
   ifreq ifr = {};
-  int sock = socket(AF_INET, SOCK_DGRAM, 0);
+  int sock = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
   ifr.ifr_addr.sa_family = AF_INET;
   strncpy(ifr.ifr_name, interface_name.data(), IFNAMSIZ - 1);
   if (ioctl(sock, SIOCGIFNETMASK, &ifr) < 0) {
@@ -37,19 +39,19 @@ IP IP::NetmaskFromInterface(std::string_view interface_name, Status &status) {
 }
 
 IP IP::NetmaskFromPrefixLength(int prefix_length) {
-  uint32_t mask = 0;
+  U32 mask = 0;
   for (int i = 0; i < prefix_length; i++) {
-    mask |= 1 << (31 - i);
+    mask = std::byteswap(std::rotr(std::byteswap(mask), 1) | 0x80000000);
   }
-  return IP(htonl(mask));
+  return IP(mask);
 }
 
-std::string IP::to_string() const {
-  return f("%d.%d.%d.%d", bytes[0], bytes[1], bytes[2], bytes[3]);
+Str ToStr(IP ip) {
+  return f("%d.%d.%d.%d", ip.bytes[0], ip.bytes[1], ip.bytes[2], ip.bytes[3]);
 }
 
-std::string Network::LoggableString() const {
-  return ip.to_string() + "/" + std::to_string(std::countr_one(netmask.addr));
+Str ToStr(const Network &n) {
+  return ToStr(n.ip) + "/" + ToStr(std::countr_one(n.netmask.addr));
 }
 
 } // namespace maf

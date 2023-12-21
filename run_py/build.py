@@ -117,16 +117,62 @@ def plan(srcs) -> tuple[list[ObjectFile], list[Binary]]:
     return list(objs.values()), binaries
 
 
-compiler = os.environ['CXX'] = os.environ['CXX'] if 'CXX' in os.environ else 'clang++'
+compiler = os.environ[
+    'CXX'] = os.environ['CXX'] if 'CXX' in os.environ else 'clang++'
 
-default_compile_args = ['-std=c++2b', '-fcolor-diagnostics',
-                        '-static', '-ffunction-sections', '-fdata-sections']
-release_compile_args = ['-O3', '-DNDEBUG', '-flto']
-debug_compile_args = ['-O0', '-g', '-D_DEBUG']
+# Create a fake toolchain to prevent Clang from picking up GCC-13 headers. We only want GCC-12 headers to be present.
+TOOLCHAIN_DIR = fs_utils.build_dir / 'toolchain'
+TOOLCHAIN_DIR.mkdir(parents=True, exist_ok=True)
 
-default_link_args = ['-fuse-ld=lld', '-static', '-Wl,--gc-sections']
-release_link_args = ['-flto']
-debug_link_args = []
+if not (TOOLCHAIN_DIR / 'include').exists():
+    (TOOLCHAIN_DIR / 'include').symlink_to('/usr/include')
+
+if not (TOOLCHAIN_DIR / 'bin').exists():
+    (TOOLCHAIN_DIR / 'bin').symlink_to('/usr/bin')
+
+(TOOLCHAIN_DIR / 'lib' / 'gcc' / 'x86_64-linux-gnu').mkdir(parents=True, exist_ok=True)
+
+if not (TOOLCHAIN_DIR / 'lib' / 'gcc' / 'x86_64-linux-gnu' / '12').exists():
+    (TOOLCHAIN_DIR / 'lib' / 'gcc' / 'x86_64-linux-gnu' / '12').symlink_to('/usr/lib/gcc/x86_64-linux-gnu/12')
+
+default_compile_args = [
+    '-std=gnu++2c', '-fcolor-diagnostics', '-ffunction-sections',
+    '-fdata-sections', '-funsigned-char', '-D_FORTIFY_SOURCE=2', '-Wformat',
+    '-Wformat-security', '-Werror=format-security', '-fno-plt', '-Wno-vla-extension',
+]
+if 'CXXFLAGS' in os.environ:
+    default_compile_args += os.environ['CXXFLAGS'].split()
+
+release_compile_args = [
+    '-static',
+    '-O3',
+    '-DNDEBUG',
+    '-flto',
+    '-fstack-protector',
+]
+debug_compile_args = ['-O0', '-g', '-D_DEBUG', '-fsanitize=address', '-fsanitize-address-use-after-return=always', '-fno-omit-frame-pointer']
+
+default_link_args = [
+    '-fuse-ld=lld', '-Wl,--gc-sections', '-Wl,--build-id=none'
+]
+
+if 'LDFLAGS' in os.environ:
+    for flag in os.environ['LDFLAGS'].split():
+        default_link_args.append(f'-Wl,{flag}')
+
+release_link_args = ['-static', '-flto', '-Wl,--strip-all', '-Wl,-z,relro', '-Wl,-z,now']
+debug_link_args = ['-fsanitize=address']
+
+if 'g++' in compiler and 'clang' not in compiler:
+    # GCC doesn't support -fcolor-diagnostics
+    default_compile_args.remove('-fcolor-diagnostics')
+
+if 'OPENWRT_BUILD' in os.environ:
+    # OpenWRT has issues with -static C++ builds
+    # https://github.com/openwrt/openwrt/issues/6710
+    default_link_args.append('-lgcc_pic')
+    # OpenWRT doesn't come with lld
+    default_link_args.remove('-fuse-ld=lld')
 
 if args.verbose:
     default_compile_args.append('-v')
@@ -163,24 +209,30 @@ def recipe() -> make.Recipe:
         pargs += [str(obj.source.path)]
         pargs += ['-c', '-o', str(obj.path)]
         builder = functools.partial(make.Popen, pargs)
-        r.add_step(builder, outputs=[obj.path],
+        r.add_step(builder,
+                   outputs=[obj.path],
                    inputs=obj.deps | set(['compile_commands.json']),
-                   desc=f'Compiling {obj.path.name}', shortcut=obj.path.name)
+                   desc=f'Compiling {obj.path.name}',
+                   shortcut=obj.path.name)
         r.generated.add(obj.path)
-        compilation_db.append(CompilationEntry(
-            str(obj.source.path), str(obj.path), pargs))
+        compilation_db.append(
+            CompilationEntry(str(obj.source.path), str(obj.path), pargs))
     for bin in bins:
-        pargs = [compiler] + default_link_args
+        pargs = [compiler]
+        pargs += [str(obj.path) for obj in bin.objects]
+        pargs += default_link_args
         if bin.build_type == 'debug':
             pargs += debug_link_args
         elif bin.build_type == 'release':
             pargs += release_link_args
-        pargs += [str(obj.path) for obj in bin.objects]
         pargs += bin.link_args
         pargs += ['-o', str(bin.path)]
         builder = functools.partial(make.Popen, pargs)
-        r.add_step(builder, outputs=[bin.path], inputs=bin.objects,
-                   desc=f'Linking {bin.path.name}', shortcut=f'link {bin.path.name}')
+        r.add_step(builder,
+                   outputs=[bin.path],
+                   inputs=bin.objects,
+                   desc=f'Linking {bin.path.name}',
+                   shortcut=f'link {bin.path.name}')
         r.generated.add(bin.path)
 
         # if platform == 'win32':
@@ -189,8 +241,11 @@ def recipe() -> make.Recipe:
         #     r.add_step(mt_runner, outputs=[path], inputs=[path, 'src/win32.manifest'], name=f'mt {binary_name}')
 
         runner = functools.partial(make.Popen, [bin.path] + bin.run_args)
-        r.add_step(runner, outputs=[], inputs=[bin.path],
-                   desc=f'Running {bin.path.name}', shortcut=bin.path.name)
+        r.add_step(runner,
+                   outputs=[],
+                   inputs=[bin.path],
+                   desc=f'Running {bin.path.name}',
+                   shortcut=bin.path.name)
 
     for ext in extensions:
         if hasattr(ext, 'hook_final'):
@@ -199,8 +254,8 @@ def recipe() -> make.Recipe:
     def compile_commands():
         jsons = []
         for entry in compilation_db:
-            arguments = ',\n    '.join(json.dumps(str(arg))
-                                       for arg in entry.arguments)
+            arguments = ',\n    '.join(
+                json.dumps(str(arg)) for arg in entry.arguments)
             json_entry = f'''{{
   "directory": { json.dumps(str(fs_utils.project_root)) },
   "file": { json.dumps(entry.file) },
@@ -212,7 +267,8 @@ def recipe() -> make.Recipe:
             print('[' + ', '.join(jsons) + ']', file=f)
 
     r.add_step(compile_commands, ['compile_commands.json'], [],
-               desc='Writing JSON Compilation Database', shortcut='compile_commands.json')
+               desc='Writing JSON Compilation Database',
+               shortcut='compile_commands.json')
     r.generated.add('compile_commands.json')
 
     return r

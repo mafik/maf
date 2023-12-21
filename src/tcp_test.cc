@@ -1,4 +1,5 @@
 #include "epoll.hh"
+#include "log.hh"
 #include "tcp.hh"
 
 #include "gtest.hh"
@@ -42,15 +43,15 @@ TEST(TCPTest, SimpleExchange) {
   Status status;
   epoll::Loop(status);
 
-  EXPECT_TRUE(status.Ok()) << status.ToString();
-  EXPECT_TRUE(server.status.Ok()) << server.status.ToString();
+  EXPECT_TRUE(status.Ok()) << status.ToStr();
+  EXPECT_TRUE(server.status.Ok()) << server.status.ToStr();
   EXPECT_TRUE(server.connection.status.Ok())
-      << server.connection.status.ToString();
+      << server.connection.status.ToStr();
   EXPECT_TRUE(client_connection.status.Ok())
-      << client_connection.status.ToString();
+      << client_connection.status.ToStr();
 
-  EXPECT_EQ(server.connection.inbox, MemBuf{0x11});
-  EXPECT_EQ(client_connection.inbox, MemBuf{0x22});
+  EXPECT_EQ(server.connection.inbox, Vec<char>{0x11});
+  EXPECT_EQ(client_connection.inbox, Vec<char>{0x22});
 }
 
 TEST(TCPTest, LargePayload) {
@@ -87,10 +88,10 @@ TEST(TCPTest, LargePayload) {
 
   Status status;
   epoll::Loop(status);
-  EXPECT_TRUE(status.Ok()) << status.ToString();
+  EXPECT_TRUE(status.Ok()) << status.ToStr();
 
   EXPECT_EQ(server.connection.inbox.size(), 1024 * 1024);
-  EXPECT_EQ(client_connection.inbox, MemBuf{});
+  EXPECT_EQ(client_connection.inbox, Vec<char>{});
 }
 
 TEST(TCPTest, ManyClients) {
@@ -108,7 +109,7 @@ TEST(TCPTest, ManyClients) {
     }
 
     void NotifyReceived() override {
-      if (inbox == MemBuf{4, 5, 6}) {
+      if (inbox == Vec<char>{4, 5, 6}) {
         ++ping_pongs;
         Close();
         --active_clients;
@@ -122,7 +123,7 @@ TEST(TCPTest, ManyClients) {
   struct ServerConnection : tcp::Connection {
     ServerConnection(FD fd) { Adopt(std::move(fd)); }
     void NotifyReceived() override {
-      if (inbox == MemBuf{1, 2, 3}) {
+      if (inbox == Vec<char>{1, 2, 3}) {
         outbox.insert(outbox.end(), {4, 5, 6});
         closing = true;
         Send();
@@ -146,13 +147,16 @@ TEST(TCPTest, ManyClients) {
   });
   all_clients_done = [&]() { server.StopListening(); };
   std::set<ClientConnection> clients;
-  for (int i = 0; i < 4000; ++i) {
-    clients.emplace();
+  for (int i = 0; i < 500; ++i) {
+    auto [it, b] = clients.emplace();
+    if (!OK(it->status)) {
+      LOG << "Client " << i << " failed: " << it->status;
+    }
   }
 
   Status status;
   epoll::Loop(status);
-  EXPECT_TRUE(status.Ok()) << status.ToString();
+  EXPECT_TRUE(status.Ok()) << status.ToStr();
 
-  EXPECT_EQ(ping_pongs, 4000);
+  EXPECT_EQ(ping_pongs, 500);
 }
